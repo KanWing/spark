@@ -7,6 +7,7 @@ import spark.SparkContext._
 import spark.HashPartitioner
 import spark.storage.StorageLevel
 import spark.KryoRegistrator
+import spark.ClosureCleaner
 
 /**
  * Class containing the id and value of a vertex
@@ -29,15 +30,6 @@ object EdgeDirection extends Enumeration {
   val Both = Value("Both")
 }
 
-//class PidVidKey(val pid: Int = 0, val vid: Int = 0) {
-//  override def equals(other: Any) = {
-//    other match {
-//      case other: PidVidKey => vid == other.vid
-//      case _ => false
-//    }
-//  }
-//}
-
 /**
  * A partitioner for tuples that only examines the first value in the tuple.
  */
@@ -57,19 +49,30 @@ class Graph[VD: Manifest, ED: Manifest](
   val vertices: spark.RDD[(Int, VD)],
   val edges: spark.RDD[((Int, Int), ED)]) {
 
-  val partitioner = new PidVidPartitioner(32)
-  
+  /** 
+   * The number of unique vertices in this graph
+   */
+  lazy val numVertices = vertices.count().toInt
+ 
+  /**
+   * The number of unique edges in this graph
+   */
+  lazy val numEdges = edges.count().toInt
+
+  /** 
+   * The internal partitioner used to split EDGES over machines.  
+   * The vertices are then copied to all machines with edges
+   * adjacent to that vertex
+   */
+  private val partitioner = new PidVidPartitioner(32)
+
+  /**
+   * Create a cached in memory copy of the graph.
+   */
   def cache(): Graph[VD, ED] = {
     new Graph(vertices.cache(), edges.cache())
   }
 
-  def nvertices(): Int = {
-    vertices.count().toInt
-  }
-
-  def nedges(): Int = {
-    edges.count().toInt
-  }
 
   /**
    * The join edges and vertices function returns a table which joins
@@ -327,8 +330,8 @@ object Graph {
     val graph = new Graph[Int, ED](vertices, edges)
 
     println("Loaded graph:" +
-      "\n\t#edges:    " + graph.nedges() +
-      "\n\t#vertices: " + graph.nvertices())
+      "\n\t#edges:    " + graph.numEdges +
+      "\n\t#vertices: " + graph.numVertices)
     graph
   }
 } // End of Graph Object
@@ -383,7 +386,7 @@ object GraphTest {
         (edata, abs(new_rank - old_rank) > 0.01)
       }, // scatter
       10).cache()
-    println("Computed graph: #edges: " + graph_ret.nedges() + "  #vertices" + graph_ret.nvertices())
+    println("Computed graph: #edges: " + graph_ret.numEdges + "  #vertices" + graph_ret.numVertices)
     graph_ret.vertices.take(10).foreach(println)
   }
 
