@@ -41,6 +41,16 @@ class PidVidPartitioner(val numPartitions: Int = 4) extends spark.Partitioner {
   override def equals(other: Any) = other.isInstanceOf[PidVidPartitioner]
 }
 
+class PidPartitioner(val numPartitions: Int = 2) extends spark.Partitioner {
+  def getPartition(key: Any): Int = key match {
+    case (pid: Int, vid: Int) => abs(pid) % numPartitions
+    case _ => 0
+  }
+  // Todo: check if other partitions is same
+  override def equals(other: Any) = other.isInstanceOf[PidPartitioner]
+}
+
+
 /**
  * A Graph RDD that supports computation on graphs.
  */
@@ -81,6 +91,11 @@ class Graph[VD: Manifest, ED: Manifest](
     gatherEdges: EdgeDirection.Value = EdgeDirection.In,
     scatterEdges: EdgeDirection.Value = EdgeDirection.Out) = {
 
+    ClosureCleaner.clean(gather)
+    ClosureCleaner.clean(sum)
+    ClosureCleaner.clean(apply)
+    ClosureCleaner.clean(scatter)
+
     val pidVidPartitioner = new PidVidPartitioner(32)
 
     /**
@@ -120,11 +135,6 @@ class Graph[VD: Manifest, ED: Manifest](
             source_active || target_active
         }
     } // end of join edges and vertices
-
-    ClosureCleaner.clean(gather)
-    ClosureCleaner.clean(sum)
-    ClosureCleaner.clean(apply)
-    ClosureCleaner.clean(scatter)
 
     val numprocs = pidVidPartitioner.numPartitions
     // Partition the edges over machines.  The part_edges table has the format
@@ -291,6 +301,50 @@ class Graph[VD: Manifest, ED: Manifest](
       eTable.map { case ((pid, source), (target, edata)) => ((source, target), edata) })
   } // End of iterate gas
 
+  def iterate2[A: Manifest](
+    gather: (Int, Edge[VD, ED]) => (ED, A),
+    sum: (A, A) => A,
+    default: A,
+    apply: (Vertex[VD], A) => VD,
+    scatter: (Int, Edge[VD, ED]) => (ED, Boolean),
+    niter: Int,
+    gatherEdges: EdgeDirection.Value = EdgeDirection.In,
+    scatterEdges: EdgeDirection.Value = EdgeDirection.Out) = {
+
+	// Clean the closures for input functions
+    ClosureCleaner.clean(gather)
+    ClosureCleaner.clean(sum)
+    ClosureCleaner.clean(apply)
+    ClosureCleaner.clean(scatter)
+    
+    // Partition the edges
+    val numBlocks = 1000
+    // Partition the edges over machines.  The part_edges table has the format
+    // (pid, ((source,target), data))
+    var eTable =
+      edges.map {
+        case ((source, target), data) => {
+          val pid = abs(source.hashCode()) % numBlocks
+          (pid, ((source, target), data))
+        }
+      }.persist()
+
+//    // The master vertices are used during the apply phase   
+//    var vTable = vertices.map { case (vid, vdata) => (vid, (vdata, true)) }.persist()
+//
+//    // Create a map from vertex id to the partitions that contain that vertex
+//    // (vid, pid)
+//    val vid2pid = eTable.flatMap {
+//      case ((pid, source), (target, _)) => Array((source, pid), (target, pid))
+//    }.distinct(1).persist() // what is the role of the number of bins?
+//
+//    val replicationFactor = vid2pid.count().toDouble / vTable.count().toDouble
+//    println("Replication Factor: " + replicationFactor)
+
+    
+    
+  } // end of iterate2
+
 } // End of Graph RDD
 
 /**
@@ -335,7 +389,25 @@ object Graph {
     val vertices = edges.flatMap {
       case ((source, target), value) => Array(source, target)
     }.distinct.map(vid => (vid, vid))
-    new Graph(sc.parallelize(vertices, 2), sc.parallelize(edges, 2)).cache()
+    new Graph(sc.parallelize(vertices), sc.parallelize(edges)).cache()
+  }
+
+  /**
+   * Make k-cycles
+   */
+  def kCycles(sc: SparkContext, numCycles: Int = 3, size: Int = 3) = {
+    // Construct the edges 
+    val edges = for (i <- 0 until numCycles; j <- 0 until size) yield {
+      val offset = i * numCycles
+      val source = offset + j
+      val target = offset + ((j + 1) % size)
+      ((source, target), i * numCycles + j)
+    }
+    // Construct the vertices enumerated with the cycle number
+    val vertices = edges.flatMap {
+      case ((source, target), value) => Array(source, target)
+    }.distinct.map(vid => (vid, (vid / numCycles) * numCycles))
+    new Graph(sc.parallelize(vertices), sc.parallelize(edges))
   }
 
 } // End of Graph Object
