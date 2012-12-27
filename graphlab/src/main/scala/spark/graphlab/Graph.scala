@@ -43,7 +43,7 @@ class PidVidPartitioner(val numPartitions: Int = 4) extends spark.Partitioner {
 
 class PidPartitioner(val numPartitions: Int = 2) extends spark.Partitioner {
   def getPartition(key: Any): Int = key match {
-    case (pid: Int, vid: Int) => abs(pid) % numPartitions
+    case (pid: Int) => math.abs(pid) % numPartitions
     case _ => 0
   }
   // Todo: check if other partitions is same
