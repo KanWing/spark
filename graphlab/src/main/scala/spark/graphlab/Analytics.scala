@@ -27,7 +27,7 @@ object Analytics {
         val Edge(Vertex(_, (degree, rank, _)), _, edata) = edge
         (edata, rank / degree)
       }, // gather
-      (a: Float, b: Float) => a + b, // sum
+      (a: Float, b: Float) => a + b, // merge
       0F,
       (vertex, a: Float) => {
         val Vertex(vid, (out_degree, rank, old_rank)) = vertex
@@ -57,11 +57,11 @@ object Analytics {
     
     val niterations = Int.MaxValue
     ccGraph.iterate(
-      (me_id, edge) => (edge.data, edge.other(me_id).data), // gather
-      (a: Int, b: Int) => min(a, b), // sum
+      (me_id, edge) => (edge.data, edge.otherVertex(me_id).data), // gather
+      (a: Int, b: Int) => min(a, b), // merge
       Integer.MAX_VALUE,
       (v, a: Int) => min(v.data, a), // apply
-      (me_id, edge) => (edge.data, edge.other(me_id).data > edge.vertex(me_id).data), // scatter
+      (me_id, edge) => (edge.data, edge.otherVertex(me_id).data > edge.vertex(me_id).data), // scatter
       niterations,
       gatherEdges = EdgeDirection.Both,
       scatterEdges = EdgeDirection.Both).vertices      
