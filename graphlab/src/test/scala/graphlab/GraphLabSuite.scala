@@ -9,6 +9,8 @@ import org.scalacheck.Prop._
 import scala.collection.mutable.ArrayBuffer
 
 import spark._
+import spark.SparkContext
+import spark.SparkContext._
 
 import spark.graphlab.Graph._
 
@@ -18,6 +20,12 @@ class GraphLabSuite extends FunSuite with Assertions with BeforeAndAfter {
 
   
   var sc: SparkContext = _
+
+  before {
+    if(sc == null) {
+      sc = new SparkContext("local[4]", "test")
+    }
+  }
   
   after {
     if (sc != null) {
@@ -28,14 +36,21 @@ class GraphLabSuite extends FunSuite with Assertions with BeforeAndAfter {
     System.clearProperty("spark.master.port")
   }
   
-  test("graph_loading") {
-    sc = new SparkContext("local[4]", "test")
+  test("GraphCreation") {
     val graph = Graph.ballAndChain(sc)
     val numEdges = graph.numEdges
     val numVertices = graph.numVertices
-    assert(numEdges == numVertices)
-    
+    assert(numEdges == numVertices)    
   }
+  
+  test("ConnectedComponents") {
+    println("Testing Connected Components")
+    val graph = Graph.ballAndChain(sc)
+    val ccId = Analytics.connectedComponents(graph)
+    val all1 = ccId.map(_._2 == 1).reduce( _ && _ )
+    assert(all1)
+  }
+
 
 
 }
