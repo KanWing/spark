@@ -7,19 +7,20 @@ import spark.HashPartitioner
 import spark.storage.StorageLevel
 import spark.KryoRegistrator
 import spark.ClosureCleaner
+import spark.RDD
 
 /**
  * Class containing the id and value of a vertex
  */
-case class Vertex[VD](val id: Int, val data: VD);
+case class Vertex[VD](val id: VID, val data: VD)
 
 /**
  * Class containing both vertices and the edge data associated with an edge
  */
 case class Edge[VD, ED](val source: Vertex[VD], val target: Vertex[VD],
   val data: ED) {
-  def other(vid: Int) = { if (source.id == vid) target else source; }
-  def vertex(vid: Int) = { if (source.id == vid) source else target; }
+  def other(vid: VID) = { if (source.id == vid) target else source; }
+  def vertex(vid: VID) = { if (source.id == vid) source else target; }
 } // end of class edge
 
 object EdgeDirection extends Enumeration {
@@ -34,21 +35,22 @@ object EdgeDirection extends Enumeration {
  */
 class PidVidPartitioner(val numPartitions: Int = 4) extends spark.Partitioner {
   def getPartition(key: Any): Int = key match {
-    case (pid: Int, vid: Int) => abs(pid) % numPartitions
+    case (pid: PID, vid: VID) => abs(pid) % numPartitions
     case _ => 0
   }
   // Todo: check if other partitions is same
-  override def equals(other: Any) = other.isInstanceOf[PidVidPartitioner]
+  override def equals(other: Any) =
+    other.isInstanceOf[PidVidPartitioner] && numPartitions == other.numPartitions
 }
 
-class PidPartitioner(val numPartitions: Int = 2) extends spark.Partitioner {
-  def getPartition(key: Any): Int = key match {
-    case (pid: Int) => math.abs(pid) % numPartitions
-    case _ => 0
-  }
-  // Todo: check if other partitions is same
-  override def equals(other: Any) = other.isInstanceOf[PidPartitioner]
-}
+// class PidPartitioner(val numPartitions: Int = 2) extends spark.Partitioner {
+//   def getPartition(key: Any): Int = key match {
+//     case (pid: PID) => math.abs(pid) % numPartitions
+//     case _ => 0
+//   }
+//   // Todo: check if other partitions is same
+//   override def equals(other: Any) = other.isInstanceOf[PidPartitioner]
+// }
 
 
 /**
@@ -103,9 +105,11 @@ class Graph[VD: Manifest, ED: Manifest](
      * the vertex and edge data.
      */
     def joinEdgesAndVertices(
-      vTable: spark.RDD[(Int, (VD, Boolean))],
-      eTable: spark.RDD[((Int, Int), (Int, ED))],
-      vid2pid: spark.RDD[(Int, Int)]) = {
+      vTable: spark.RDD[(VID, (VD, Boolean))], // vid, data, active
+      eTable: spark.RDD[((PID, VID), (VID, ED))], // pid, src_vid, dst_vid, data
+      vid2pid: spark.RDD[(VID, PID)]) // vid, pid
+    : RDD[((PID, VID), (VID, VD, STATUS, ED, VID, VD, STATUS))] = {
+    // (pid, vid), (src_vid, src_data, src_active, e_data, dst_vid, dst_data, dst_active)
 
       // Split the table among machines
       val vreplicas = vTable.join(vid2pid).map {
@@ -119,7 +123,7 @@ class Graph[VD: Manifest, ED: Manifest](
             ((pid, target_id), (source_id, source_vdata, source_active, edata))
         })
         .join(vreplicas).mapPartitions(iter => iter.map {
-          // Join with the target vertex and rekey back to the source vertex 
+          // Join with the target vertex and rekey back to the source vertex
           case ((pid, target_id),
             ((source_id, source_vdata, source_active, edata),
               (target_vdata, target_active))) =>
@@ -148,7 +152,7 @@ class Graph[VD: Manifest, ED: Manifest](
         }
       }.partitionBy(pidVidPartitioner).persist()
 
-    // The master vertices are used during the apply phase   
+    // The master vertices are used during the apply phase
     var vTable = vertices.map { case (vid, vdata) => (vid, (vdata, true)) }.persist()
 
     // Create a map from vertex id to the partitions that contain that vertex
@@ -165,8 +169,9 @@ class Graph[VD: Manifest, ED: Manifest](
     var nactive = vTable.map {
       case (_, (_, active)) => if (active) 1 else 0
     }.reduce(_ + _);
+    //var numActive = vTable.filter(_._2._2).count
     while (iter < niter && nactive > 0) {
-      // Begin iteration    
+      // Begin iteration
       println("\n\n==========================================================")
       println("Begin iteration: " + iter)
       println("Active:          " + nactive)
@@ -214,10 +219,19 @@ class Graph[VD: Manifest, ED: Manifest](
         case (sourceId, _, targetId, _, edata) => (targetId, edata)
       }
 
+      // mapPartitions { iter =>
+      //   val reuseRow = new Array[Object](5)
+      //   iter.map {
+      //     reusedRow(0) = ...
+      //     (1) = ...
+      //     reusedRow
+      //   }
+      // }
+
       // Compute the final sum
       val localDefault = default
       val localSum = sum
-      val accum = gTable.flatMap {
+      val accumTable: RDD[(VID, A)] = gTable.flatMap {
         case (_, (sourceId, Some(sourceAccum), targetId, Some(targetAccum), _)) =>
           Array((sourceId, sourceAccum), (targetId, targetAccum))
         case (_, (sourceId, None, targetId, Some(targetAccum), _)) =>
@@ -225,14 +239,14 @@ class Graph[VD: Manifest, ED: Manifest](
         case (_, (sourceId, Some(sourceAccum), targetId, None, _)) =>
           Array((sourceId, sourceAccum))
         case (_, (sourceId, None, targetId, None, _)) =>
-          Array[(Int, A)]()
+          Iterator.empty
       }.reduceByKey(localSum)
 
       // Apply Phase ---------------------------------------------
       // Merge with the gather result
 
       val localApply = apply
-      vTable = vTable.leftOuterJoin(accum).mapPartitions(
+      vTable = vTable.leftOuterJoin(accumTable).mapPartitions(
         iter => iter.map { // Execute the apply if necessary
           case (vid, ((data, true), Some(accum))) =>
             (vid, (localApply(new Vertex[VD](vid, data), accum), true))
@@ -316,7 +330,7 @@ class Graph[VD: Manifest, ED: Manifest](
     ClosureCleaner.clean(sum)
     ClosureCleaner.clean(apply)
     ClosureCleaner.clean(scatter)
-    
+
     // Partition the edges
     val numBlocks = 1000
     // Partition the edges over machines.  The part_edges table has the format
@@ -329,7 +343,7 @@ class Graph[VD: Manifest, ED: Manifest](
         }
       }.persist()
 
-//    // The master vertices are used during the apply phase   
+//    // The master vertices are used during the apply phase
 //    var vTable = vertices.map { case (vid, vdata) => (vid, (vdata, true)) }.persist()
 //
 //    // Create a map from vertex id to the partitions that contain that vertex
@@ -341,8 +355,8 @@ class Graph[VD: Manifest, ED: Manifest](
 //    val replicationFactor = vid2pid.count().toDouble / vTable.count().toDouble
 //    println("Replication Factor: " + replicationFactor)
 
-    
-    
+
+
   } // end of iterate2
 
 } // End of Graph RDD
@@ -396,7 +410,7 @@ object Graph {
    * Make k-cycles
    */
   def kCycles(sc: SparkContext, numCycles: Int = 3, size: Int = 3) = {
-    // Construct the edges 
+    // Construct the edges
     val edges = for (i <- 0 until numCycles; j <- 0 until size) yield {
       val offset = i * numCycles
       val source = offset + j
@@ -424,11 +438,11 @@ object Graph {
 // */
 //object GraphTest {
 //
-// 
-// 
 //
-//  
-//  
+//
+//
+//
+//
 //
 //  def main(args: Array[String]) {
 //
