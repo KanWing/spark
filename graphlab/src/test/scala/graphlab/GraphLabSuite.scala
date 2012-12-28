@@ -57,7 +57,12 @@ class GraphLabSuite extends FunSuite with Assertions with BeforeAndAfter {
     }.reduce(_ && _)
     assert(allAgree)
   }
-  
+ 
+   test("GooglePageRank") {
+    println("One Iteration of PageRank on a large real graph")
+    val graph = Graph.fromURL(sc, "http://parallel.ml.cmu.edu/share/google.tsv", a => true)
+    val pr = Analytics.pageRank(graph, 1)
+  }
   
 
 }
