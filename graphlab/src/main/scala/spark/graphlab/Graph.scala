@@ -473,7 +473,7 @@ object Graph {
   def fromURL[ED: Manifest](sc: SparkContext,
     fname: String, edgeParser: String => ED) = {
 
-    println("loading graph")
+    println("downloading graph")
     val url = new java.net.URL(fname)
     val content = scala.io.Source.fromInputStream(url.openStream).getLines()
       .map(line => {
