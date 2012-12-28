@@ -47,14 +47,17 @@ class GraphLabSuite extends FunSuite with Assertions with BeforeAndAfter {
     val all1 = ccId.map(_._2 == 1).reduce(_ && _)
     assert(all1)
   }
+  
   test("KCycleConnectedComponents") {
     println("Testing K Connected Components")
-    val graph = Graph.kCycles(sc)
+    val graph = Graph.kCycles(sc, 1000, 10)
     val ccId = Analytics.connectedComponents(graph)
     val allAgree = ccId.join(graph.vertices).map {
       case (vid, (ccId, origId)) => ccId == origId
     }.reduce(_ && _)
     assert(allAgree)
   }
+  
+  
 
 }

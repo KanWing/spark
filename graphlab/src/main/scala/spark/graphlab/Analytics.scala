@@ -25,7 +25,7 @@ object Analytics {
     pageRankGraph.iterate(
       (me_id, edge) => {
         val Edge(Vertex(_, (degree, rank, _)), _, edata) = edge
-        (edata, rank / degree)
+        rank / degree
       }, // gather
       (a: Float, b: Float) => a + b, // merge
       0F,
@@ -35,39 +35,38 @@ object Analytics {
       }, // apply
       (me_id, edge) => {
         val Edge(Vertex(_, (_, new_rank, old_rank)), _, edata) = edge
-        (edata, abs(new_rank - old_rank) > 0.01)
+        abs(new_rank - old_rank) > 0.01
       }, // scatter
       maxIter).vertices.mapValues { case (degree, rank, oldRank) => rank }
     //    println("Computed graph: #edges: " + graph_ret.numEdges + "  #vertices" + graph_ret.numVertices)
     //    graph_ret.vertices.take(10).foreach(println)
   }
 
-  
   /**
-   * Compute the connected component membership of each vertex 
-   * and return an RDD with the vertex value containing the 
+   * Compute the connected component membership of each vertex
+   * and return an RDD with the vertex value containing the
    * lowest vertex id in the connected component containing
    * that vertex.
    */
   def connectedComponents[VD: Manifest, ED: Manifest](graph: Graph[VD, ED]) = {
 
-    val vertices = graph.vertices.mapPartitions( iter => iter.map{ case (vid, _) => (vid, vid) })
+    val vertices = graph.vertices.mapPartitions(iter => iter.map { case (vid, _) => (vid, vid) })
     val edges = graph.edges.mapValues(v => None)
     val ccGraph = new Graph(vertices, edges)
-    
+
     val niterations = Int.MaxValue
     ccGraph.iterate(
-      (me_id, edge) => (edge.data, edge.otherVertex(me_id).data), // gather
+      (me_id, edge) => edge.otherVertex(me_id).data, // gather
       (a: Int, b: Int) => min(a, b), // merge
       Integer.MAX_VALUE,
       (v, a: Int) => min(v.data, a), // apply
-      (me_id, edge) => (edge.data, edge.otherVertex(me_id).data > edge.vertex(me_id).data), // scatter
+      (me_id, edge) => edge.otherVertex(me_id).data > edge.vertex(me_id).data, // scatter
       niterations,
       gatherEdges = EdgeDirection.Both,
-      scatterEdges = EdgeDirection.Both).vertices      
-//      
-//    graph_ret.vertices.collect.foreach(println)
-//    graph_ret.edges.take(10).foreach(println)
+      scatterEdges = EdgeDirection.Both).vertices
+    //      
+    //    graph_ret.vertices.collect.foreach(println)
+    //    graph_ret.edges.take(10).foreach(println)
   }
 
 }
