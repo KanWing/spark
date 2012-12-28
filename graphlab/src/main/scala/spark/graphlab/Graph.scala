@@ -44,6 +44,29 @@ class PidVidPartitioner(val numPartitions: Int = 4) extends spark.Partitioner {
   }
 }
 
+//object Hack {
+//  val map = new collection.parallel.mutable.ParHashMap[Vid, (Any, Status)]()
+//  def update[VD](vTable: spark.RDD[(Vid, (VD, Boolean))], vid2pid: spark.RDD[(Vid, Pid)]) {
+//    val pidVidPartitioner = new PidVidPartitioner()
+//    // no return (mutates vdataCache illegally)
+//    val newInsertions = vTable.join(vid2pid).map {
+//      case (vid, ((vdata, active), pid)) => ((pid, vid), (vdata, active))
+//    }.partitionBy(pidVidPartitioner).mapPartitions(iter => iter.map {
+//      case ((pid, vid), (vdata, active)) => {
+//        Hack.map.put(vid, (vdata, active)) match {
+//          case Some(_) => 0
+//          case None => 1
+//        }
+//      }
+//    }, true).reduce(_ + _)
+//    println("New Map insertsions: " + newInsertions)
+//  } // end of join edges and vertices
+//  def get[T](vid: Vid) = {
+//    val (data, active) = map(vid)
+//    (data.asInstanceOf[T], active)
+//  }
+//}
+
 /**
  * A Graph RDD that supports computation on graphs.
  */
@@ -249,12 +272,14 @@ class Graph[VD: Manifest, ED: Manifest](
   private def updateVdataCache(
     vTable: spark.RDD[(Vid, (VD, Boolean))], // vid, data, active
     vid2pid: spark.RDD[(Vid, Pid)], // vid, pid
-    vdataCache: spark.broadcast.Broadcast[collection.mutable.HashMap[Vid, (VD, Status)]]) {
+    vdataCache: spark.broadcast.Broadcast[collection.parallel.mutable.ParHashMap[Vid, (VD, Status)]]) {
+    println("populating hashmap---------------------------------------------")
     // no return (mutates vdataCache illegally)
     val newInsertions = vTable.join(vid2pid).map {
       case (vid, ((vdata, active), pid)) => ((pid, vid), (vdata, active))
     }.partitionBy(pidVidPartitioner).mapPartitions(iter => iter.map {
       case ((pid, vid), (vdata, active)) => {
+        println("put vid: " + vid)
         vdataCache.value.put(vid, (vdata, active)) match {
           case Some(_) => 0
           case None => 1
@@ -306,8 +331,9 @@ class Graph[VD: Manifest, ED: Manifest](
     }.distinct(1).cache() // what is the role of the number of bins?
 
     // Place a vid2vdat map
-    val vdataCache = vertices.context.broadcast(new collection.mutable.HashMap[Vid, (VD, Status)]())
+    val vdataCache = vertices.context.broadcast(new collection.parallel.mutable.ParHashMap[Vid, (VD, Status)]())
     updateVdataCache(vTable, vid2pid, vdataCache)
+    // Hack.update(vTable, vid2pid)
 
     val replicationFactor = vid2pid.count().toDouble / vTable.count().toDouble
     println("Replication Factor: " + replicationFactor)
@@ -333,6 +359,9 @@ class Graph[VD: Manifest, ED: Manifest](
           case ((pid, srcId), (dstId, eData)) => {
             val (srcData, srcActive) = vdataCache.value(srcId)
             val (dstData, dstActive) = vdataCache.value(dstId)
+            //            val (srcData, srcActive) = Hack.get[VD](srcId)
+            //            val (dstData, dstActive) = Hack.get[VD](dstId)
+
             val edge = new Edge(Vertex(srcId, srcData), new Vertex(dstId, dstData), eData)
             var accum = List.empty[(Vid, A)]
             if (dstActive && (gatherEdges == EdgeDirection.In ||
@@ -359,6 +388,7 @@ class Graph[VD: Manifest, ED: Manifest](
         }, true).cache()
 
       updateVdataCache(vTable, vid2pid, vdataCache)
+      //      Hack.update(vTable, vid2pid)
 
       // Scatter Phase ---------------------------------------------
       val scatterTable = eTable
@@ -366,6 +396,8 @@ class Graph[VD: Manifest, ED: Manifest](
           case ((pid, srcId), (dstId, eData)) => {
             val (srcData, srcActive) = vdataCache.value(srcId)
             val (dstData, dstActive) = vdataCache.value(dstId)
+            //            val (srcData, srcActive) = Hack.get[VD](srcId)
+            //            val (dstData, dstActive) = Hack.get[VD](dstId)
             val edge = new Edge(Vertex(srcId, srcData), new Vertex(dstId, dstData), eData)
             var accum = List.empty[(Vid, Status)]
             if (dstActive && (scatterEdges == EdgeDirection.In ||
@@ -387,8 +419,8 @@ class Graph[VD: Manifest, ED: Manifest](
       }.cache()
 
       updateVdataCache(vTable, vid2pid, vdataCache)
+      //      Hack.update(vTable, vid2pid)
 
-      
       // Compute the number active
       nactive = vTable.map {
         case (_, (_, active)) => if (active) 1 else 0

@@ -20,7 +20,7 @@ class GraphLabSuite extends FunSuite with Assertions with BeforeAndAfter {
 
   before {
     if (sc == null) {
-      sc = new SparkContext("local[4]", "test")
+      sc = new SparkContext("local[1]", "test")
     }
   }
 
@@ -33,21 +33,21 @@ class GraphLabSuite extends FunSuite with Assertions with BeforeAndAfter {
     System.clearProperty("spark.master.port")
   }
 
-  test("GraphCreation") {
-    val graph = Graph.ballAndChain(sc)
-    val numEdges = graph.numEdges
-    val numVertices = graph.numVertices
-    assert(numEdges == numVertices)
-  }
+//  test("GraphCreation") {
+//    val graph = Graph.ballAndChain(sc)
+//    val numEdges = graph.numEdges
+//    val numVertices = graph.numVertices
+//    assert(numEdges == numVertices)
+//  }
 
-  test("SingleConnectedComponent") {
-    println("Testing Single Connected Components")
-    val graph = Graph.ballAndChain(sc)
-    val ccId = Analytics.connectedComponents(graph)
-    val all1 = ccId.map(_._2 == 1).reduce(_ && _)
-    assert(all1)
-  }
-  
+//  test("SingleConnectedComponent") {
+//    println("Testing Single Connected Components")
+//    val graph = Graph.ballAndChain(sc)
+//    val ccId = Analytics.connectedComponents(graph)
+//    val all1 = ccId.map(_._2 == 1).reduce(_ && _)
+//    assert(all1)
+//  }
+//  
   test("KCycleConnectedComponents") {
     println("Testing K Connected Components")
     val graph = Graph.kCycles(sc, 1000, 10)
