@@ -55,7 +55,7 @@ object Analytics {
     val ccGraph = new Graph(vertices, edges)
 
     val niterations = Int.MaxValue
-    ccGraph.iterate(
+    ccGraph.iterateUnsafe(
       (me_id, edge) => edge.otherVertex(me_id).data, // gather
       (a: Int, b: Int) => min(a, b), // merge
       Integer.MAX_VALUE,

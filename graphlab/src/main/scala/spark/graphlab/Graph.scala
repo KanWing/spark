@@ -33,7 +33,7 @@ object EdgeDirection extends Enumeration {
 /**
  * A partitioner for tuples that only examines the first value in the tuple.
  */
-class PidVidPartitioner(val numPartitions: Int = 25) extends spark.Partitioner {
+class PidVidPartitioner(val numPartitions: Int = 4) extends spark.Partitioner {
   def getPartition(key: Any): Int = key match {
     case (pid: Pid, vid: Vid) => math.abs(pid) % numPartitions
     case _ => 0
@@ -134,16 +134,14 @@ class Graph[VD: Manifest, ED: Manifest](
     ClosureCleaner.clean(apply)
     ClosureCleaner.clean(scatter)
 
-    val pidVidPartitioner = new PidVidPartitioner(32)
-
-    val numprocs = pidVidPartitioner.numPartitions
+    val numProcs = pidVidPartitioner.numPartitions
     // Partition the edges over machines.  The part_edges table has the format
     // ((pid, source), (target, data))
     var eTable =
       edges.map {
         case ((source, target), data) => {
           // val pid = abs((source, target).hashCode()) % numprocs
-          val pid = abs(source.hashCode()) % numprocs
+          val pid = abs(source.hashCode()) % numProcs
           ((pid, source), (target, data))
         }
       }.partitionBy(pidVidPartitioner).cache()
@@ -242,7 +240,168 @@ class Graph[VD: Manifest, ED: Manifest](
     // Collapse vreplicas, edges and retuen a new graph
     new Graph(vTable.map { case (vid, (vdata, _)) => (vid, vdata) },
       eTable.map { case ((pid, source), (target, edata)) => ((source, target), edata) })
-  } // End of iterate gas
+  } // End of iterate 
+
+  /**
+   * The join edges and vertices function returns a table which joins
+   * the vertex and edge data.
+   */
+  private def updateVdataCache(
+    vTable: spark.RDD[(Vid, (VD, Boolean))], // vid, data, active
+    vid2pid: spark.RDD[(Vid, Pid)], // vid, pid
+    vdataCache: spark.broadcast.Broadcast[collection.mutable.HashMap[Vid, (VD, Status)]]) {
+    // no return (mutates vdataCache illegally)
+    val newInsertions = vTable.join(vid2pid).map {
+      case (vid, ((vdata, active), pid)) => ((pid, vid), (vdata, active))
+    }.partitionBy(pidVidPartitioner).mapPartitions(iter => iter.map {
+      case ((pid, vid), (vdata, active)) => {
+        vdataCache.value.put(vid, (vdata, active)) match {
+          case Some(_) => 0
+          case None => 1
+        }
+      }
+    }, true).reduce(_ + _)
+    println("New Map insertsions: " + newInsertions)
+  } // end of join edges and vertices
+
+  /**
+   * Execute the synchronous powergraph abstraction.
+   *
+   * gather: (center_vid, edge) => accumulator
+   * Todo: Finish commenting
+   */
+  def iterateUnsafe[A: Manifest](
+    gather: (Vid, Edge[VD, ED]) => A,
+    merge: (A, A) => A,
+    default: A,
+    apply: (Vertex[VD], A) => VD,
+    scatter: (Vid, Edge[VD, ED]) => Boolean,
+    niter: Int,
+    gatherEdges: EdgeDirection.Value = EdgeDirection.In,
+    scatterEdges: EdgeDirection.Value = EdgeDirection.Out) = {
+
+    ClosureCleaner.clean(gather)
+    ClosureCleaner.clean(merge)
+    ClosureCleaner.clean(apply)
+    ClosureCleaner.clean(scatter)
+
+    val numProcs = pidVidPartitioner.numPartitions
+    // Partition the edges over machines.  The part_edges table has the format
+    // ((pid, source), (target, data))
+    var eTable =
+      edges.map {
+        case ((source, target), data) => {
+          val pid = abs(source) % numProcs
+          ((pid, source), (target, data))
+        }
+      }.partitionBy(pidVidPartitioner).cache()
+
+    // The master vertices are used during the apply phase
+    var vTable = vertices.map { case (vid, vdata) => (vid, (vdata, true)) }.cache()
+
+    // Create a map from vertex id to the partitions that contain that vertex
+    // (vid, pid)
+    val vid2pid = eTable.flatMap {
+      case ((pid, source), (target, _)) => Array((source, pid), (target, pid))
+    }.distinct(1).cache() // what is the role of the number of bins?
+
+    // Place a vid2vdat map
+    val vdataCache = vertices.context.broadcast(new collection.mutable.HashMap[Vid, (VD, Status)]())
+    updateVdataCache(vTable, vid2pid, vdataCache)
+
+    val replicationFactor = vid2pid.count().toDouble / vTable.count().toDouble
+    println("Replication Factor: " + replicationFactor)
+
+    // Loop until convergence or there are no active vertices
+    var iter = 0
+    var nactive = vTable.map {
+      case (_, (_, active)) => if (active) 1 else 0
+    }.reduce(_ + _);
+    //var numActive = vTable.filter(_._2._2).count
+    while (iter < niter && nactive > 0) {
+      // Begin iteration
+      println("\n\n==========================================================")
+      println("Begin iteration: " + iter)
+      println("Active:          " + nactive)
+
+      iter += 1
+
+      // Gather Phase ---------------------------------------------
+
+      val gatherTable = eTable
+        .flatMap {
+          case ((pid, srcId), (dstId, eData)) => {
+            val (srcData, srcActive) = vdataCache.value(srcId)
+            val (dstData, dstActive) = vdataCache.value(dstId)
+            val edge = new Edge(Vertex(srcId, srcData), new Vertex(dstId, dstData), eData)
+            var accum = List.empty[(Vid, A)]
+            if (dstActive && (gatherEdges == EdgeDirection.In ||
+              gatherEdges == EdgeDirection.Both)) { // gather on the target
+              accum ++= List((dstId, gather(dstId, edge)))
+            }
+            if (srcActive && (gatherEdges == EdgeDirection.Out ||
+              gatherEdges == EdgeDirection.Both)) { // gather on the source
+              accum ++= List((srcId, gather(srcId, edge)))
+            }
+            accum
+          }
+        }.reduceByKey(merge)
+
+      // Apply Phase ---------------------------------------------
+      // Merge with the gather result
+      vTable = vTable.leftOuterJoin(gatherTable).mapPartitions(
+        iter => iter.map { // Execute the apply if necessary
+          case (vid, ((data, true), Some(accum))) =>
+            (vid, (apply(new Vertex[VD](vid, data), accum), true))
+          case (vid, ((data, true), None)) =>
+            (vid, (apply(new Vertex[VD](vid, data), default), true))
+          case (vid, ((data, false), _)) => (vid, (data, false))
+        }, true).cache()
+
+      updateVdataCache(vTable, vid2pid, vdataCache)
+
+      // Scatter Phase ---------------------------------------------
+      val scatterTable = eTable
+        .flatMap {
+          case ((pid, srcId), (dstId, eData)) => {
+            val (srcData, srcActive) = vdataCache.value(srcId)
+            val (dstData, dstActive) = vdataCache.value(dstId)
+            val edge = new Edge(Vertex(srcId, srcData), new Vertex(dstId, dstData), eData)
+            var accum = List.empty[(Vid, Status)]
+            if (dstActive && (scatterEdges == EdgeDirection.In ||
+              scatterEdges == EdgeDirection.Both)) { // gather on the target
+              accum ++= List((srcId, scatter(dstId, edge)))
+            }
+            if (srcActive && (scatterEdges == EdgeDirection.Out ||
+              scatterEdges == EdgeDirection.Both)) { // gather on the source
+              accum ++= List((dstId, scatter(srcId, edge)))
+            }
+            accum
+          }
+        }.reduceByKey(_ || _)
+
+      // update active vertices
+      vTable = vTable.leftOuterJoin(scatterTable).map {
+        case (vid, ((vdata, _), Some(new_active))) => (vid, (vdata, new_active))
+        case (vid, ((vdata, _), None)) => (vid, (vdata, false))
+      }.cache()
+
+      updateVdataCache(vTable, vid2pid, vdataCache)
+
+      
+      // Compute the number active
+      nactive = vTable.map {
+        case (_, (_, active)) => if (active) 1 else 0
+      }.reduce(_ + _);
+
+    }
+    println("=========================================")
+    println("Finished in " + iter + " iterations.")
+
+    // Collapse vreplicas, edges and retuen a new graph
+    new Graph(vTable.map { case (vid, (vdata, _)) => (vid, vdata) },
+      eTable.map { case ((pid, source), (target, edata)) => ((source, target), edata) })
+  } // End of iterateUnsafe
 
   //
   //  /**
