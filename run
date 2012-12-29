@@ -45,7 +45,7 @@ fi
 # Figure out how much memory to use per executor and set it as an environment
 # variable so that our process sees it and can report it to Mesos
 if [ -z "$SPARK_MEM" ] ; then
-  SPARK_MEM="512m"
+  SPARK_MEM="4G"
 fi
 export SPARK_MEM
 
@@ -63,6 +63,7 @@ CORE_DIR="$FWDIR/core"
 REPL_DIR="$FWDIR/repl"
 EXAMPLES_DIR="$FWDIR/examples"
 BAGEL_DIR="$FWDIR/bagel"
+GRAPHLAB_DIR="$FWDIR/graphlab"
 
 # Build up classpath
 CLASSPATH="$SPARK_CLASSPATH"
@@ -70,6 +71,7 @@ CLASSPATH+=":$FWDIR/conf"
 CLASSPATH+=":$CORE_DIR/target/scala-$SCALA_VERSION/classes"
 if [ -n "$SPARK_TESTING" ] ; then
   CLASSPATH+=":$CORE_DIR/target/scala-$SCALA_VERSION/test-classes"
+  CLASSPATH+=":$GRAPHLAB_DIR/target/scala-$SCALA_VERSION/test-classes"
 fi
 CLASSPATH+=":$CORE_DIR/src/main/resources"
 CLASSPATH+=":$REPL_DIR/target/scala-$SCALA_VERSION/classes"
@@ -89,6 +91,7 @@ for jar in `find "$REPL_DIR/target" -name 'spark-repl-*-shaded-hadoop*.jar'`; do
   CLASSPATH+=":$jar"
 done
 CLASSPATH+=":$BAGEL_DIR/target/scala-$SCALA_VERSION/classes"
+CLASSPATH+=":$GRAPHLAB_DIR/target/scala-$SCALA_VERSION/classes"
 export CLASSPATH # Needed for spark-shell
 
 # Figure out whether to run our class with java or with the scala launcher.
