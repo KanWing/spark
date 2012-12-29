@@ -12,14 +12,14 @@ object Analytics {
   def pageRank[VD: Manifest, ED: Manifest](graph: Graph[VD, ED], maxIter: Int = 10) = {
     // Compute the out degree of each vertex
     val outDegree = graph.edges.flatMap {
-      case ((src, target), data) => Array((src, 1), (target, 0))
+      case (src, target, data) => Array((src, 1), (target, 0))
     }.reduceByKey(_ + _)
 
     // Construct the pagerank graph with 
     //   vertex data: (Degree, Rank, OldRank)
     //   edge data: None
     val vertices = outDegree.mapValues(deg => (deg, 1.0F, 1.0F))
-    val edges = graph.edges.mapValues(v => None)
+    val edges = graph.edges //.map(v => None)
     val pageRankGraph = new Graph(vertices, edges)
     // Run PageRank
     pageRankGraph.iterate(
@@ -51,11 +51,11 @@ object Analytics {
   def connectedComponents[VD: Manifest, ED: Manifest](graph: Graph[VD, ED]) = {
 
     val vertices = graph.vertices.mapPartitions(iter => iter.map { case (vid, _) => (vid, vid) })
-    val edges = graph.edges.mapValues(v => None)
+    val edges = graph.edges // .mapValues(v => None)
     val ccGraph = new Graph(vertices, edges)
 
     val niterations = Int.MaxValue
-    ccGraph.iterateUnsafe(
+    ccGraph.iterate(
       (me_id, edge) => edge.otherVertex(me_id).data, // gather
       (a: Int, b: Int) => min(a, b), // merge
       Integer.MAX_VALUE,
@@ -67,6 +67,16 @@ object Analytics {
     //      
     //    graph_ret.vertices.collect.foreach(println)
     //    graph_ret.edges.take(10).foreach(println)
+  }
+
+  def main(args: Array[String]) = {
+    val fname = args(0)
+    val sc = new SparkContext("local[4]", "Analytics")
+    println("One Iteration of PageRank on a large real graph")
+    //    val graph = Graph.fromURL(sc, "http://parallel.ml.cmu.edu/share/google.tsv", a => true)
+    val graph = Graph.textFile(sc, fname, a => true)
+    val pr = Analytics.pageRank(graph, 1)
+    println("Total rank: " + pr.map(_._2).reduce(_+_))
   }
 
 }
