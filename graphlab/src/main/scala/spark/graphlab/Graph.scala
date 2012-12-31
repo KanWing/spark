@@ -1,6 +1,5 @@
 package spark.graphlab
 
-import scala.math._
 import spark.SparkContext
 import spark.SparkContext._
 import spark.HashPartitioner
@@ -26,7 +25,7 @@ case class Edge[VD, ED](val source: Vertex[VD], val target: Vertex[VD],
 object EdgeDirection extends Enumeration {
   val None = Value("None")
   val In = Value("In")
-  val Out = Value("Out")
+  val Out =  Value("Out")
   val Both = Value("Both")
 }
 
@@ -58,7 +57,7 @@ class Graph[VD: Manifest, ED: Manifest](
    * The join edges and vertices function returns a table which joins
    * the vertex and edge data.
    */
-  private def groupEdgesAndVertices(
+  def groupEdgesAndVertices(
     vTable: spark.RDD[(Vid, (VD, Boolean))], // vid, data, active
     eTable: spark.RDD[(Pid, (Vid, Vid, ED))], // pid, src_vid, dst_vid, data
     vid2pid: spark.RDD[(Vid, Pid)]) = {
@@ -97,7 +96,7 @@ class Graph[VD: Manifest, ED: Manifest](
       edges.map {
         case (source, target, data) => {
           // val pid = abs((source, target).hashCode()) % numProcs
-          val pid = abs(source.hashCode()) % numProcs
+          val pid = math.abs(source.hashCode()) % numProcs
           (pid, (source, target, data))
         }
       }.cache()
