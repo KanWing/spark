@@ -45,14 +45,14 @@ fi
 # Figure out how much memory to use per executor and set it as an environment
 # variable so that our process sees it and can report it to Mesos
 if [ -z "$SPARK_MEM" ] ; then
-  SPARK_MEM="4G"
+  SPARK_MEM="24G"
 fi
 export SPARK_MEM
 
 # Set JAVA_OPTS to be able to load native libraries and to set heap size
 JAVA_OPTS="$SPARK_JAVA_OPTS"
 JAVA_OPTS+=" -Djava.library.path=$SPARK_LIBRARY_PATH"
-JAVA_OPTS+=" -Xms$SPARK_MEM -Xmx$SPARK_MEM"
+JAVA_OPTS+=" -Xms200m -Xmx$SPARK_MEM"
 # Load extra JAVA_OPTS from conf/java-opts, if it exists
 if [ -e $FWDIR/conf/java-opts ] ; then
   JAVA_OPTS+=" `cat $FWDIR/conf/java-opts`"

@@ -2,7 +2,6 @@ package spark.graphlab
 
 import spark._
 import spark.SparkContext._
-import Math._
 
 object Analytics {
 
@@ -35,7 +34,7 @@ object Analytics {
       }, // apply
       (me_id, edge) => {
         val Edge(Vertex(_, (_, new_rank, old_rank)), _, edata) = edge
-        abs(new_rank - old_rank) > 0.01
+        math.abs(new_rank - old_rank) > 0.01
       }, // scatter
       maxIter).vertices.mapValues { case (degree, rank, oldRank) => rank }
     //    println("Computed graph: #edges: " + graph_ret.numEdges + "  #vertices" + graph_ret.numVertices)
@@ -57,9 +56,9 @@ object Analytics {
     val niterations = Int.MaxValue
     ccGraph.iterate(
       (me_id, edge) => edge.otherVertex(me_id).data, // gather
-      (a: Int, b: Int) => min(a, b), // merge
+      (a: Int, b: Int) => math.min(a, b), // merge
       Integer.MAX_VALUE,
-      (v, a: Int) => min(v.data, a), // apply
+      (v, a: Int) => math.min(v.data, a), // apply
       (me_id, edge) => edge.otherVertex(me_id).data > edge.vertex(me_id).data, // scatter
       niterations,
       gatherEdges = EdgeDirection.Both,
