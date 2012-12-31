@@ -70,8 +70,9 @@ object Analytics {
   }
 
   def main(args: Array[String]) = {
-    val fname = args(0)
-    val sc = new SparkContext("local[4]", "Analytics")
+    val host = args(0)
+    val fname = args(1)
+    val sc = new SparkContext(host, "Analytics")
     println("One Iteration of PageRank on a large real graph")
     //    val graph = Graph.fromURL(sc, "http://parallel.ml.cmu.edu/share/google.tsv", a => true)
     val graph = Graph.textFile(sc, fname, a => true)

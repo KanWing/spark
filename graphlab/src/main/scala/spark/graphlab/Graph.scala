@@ -89,15 +89,15 @@ class Graph[VD: Manifest, ED: Manifest](
     ClosureCleaner.clean(apply)
     ClosureCleaner.clean(scatter)
 
-    val numProcs = 100
+    val numProcs = 10000
 
     // Partition the edges over machines.  The part_edges table has the format
     // ((pid, source), (target, data))
     var eTable =
       edges.map {
         case (source, target, data) => {
-          // val pid = abs((source, target).hashCode()) % numProcs
-          val pid = abs(source.hashCode()) % numProcs
+          val pid = abs((source, target).hashCode()) % numProcs
+          // val pid = abs(source.hashCode()) % numProcs
           (pid, (source, target, data))
         }
       }.cache()
