@@ -154,7 +154,7 @@ object SparkBuild extends Build {
   )
 
 
-  def bagelSettings = sharedSettings ++ Seq(name := "bagel-graphlab")
+  def bagelSettings = sharedSettings ++ Seq(name := "spark-bagel")
 
   def graphlabSettings = sharedSettings ++ Seq(name := "spark-graphlab")
 

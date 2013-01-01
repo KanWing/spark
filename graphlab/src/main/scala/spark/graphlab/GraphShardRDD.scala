@@ -27,16 +27,15 @@ private[spark] class CoGroupAggregator
 
 
 class GraphShardRDD[VD, ED, U](
-    @transient vTable: spark.RDD[(Vid, (VD, Status))], // vid, data, active
-    @transient vid2pid: spark.RDD[(Vid, Pid)],
+    @transient vTable: spark.RDD[(Vid, (VD, Status, Array[Pid]))], // vid, data, active
     eTable: spark.RDD[(Pid, (Vid, Vid, ED))], // pid, src_vid, dst_vid, data
     f: Edge[VD, ED] => TraversableOnce[(Vid, U)])
   extends RDD[(Vid, U)](eTable.context) with Logging {
 
   // Join vid2pid and vTable, generate a shuffle dependency on the joined result, and get
   // the shuffle id so we can use it on the slave.
-  @transient val vTableReplicated = vTable.join(vid2pid).map {
-    case (vid, ((vdata, active), pid)) => (pid, (vid, (vdata, active)))
+  @transient val vTableReplicated = vTable.flatMap {
+    case (vid, (vData, isActive, pids)) => pids.map(pid => (pid, (vid, vData, isActive)))
   }
   @transient val shuffleDependency = new ShuffleDependency(vTableReplicated, eTable.partitioner.get)
   val shuffleId = shuffleDependency.shuffleId
@@ -67,8 +66,8 @@ class GraphShardRDD[VD, ED, U](
     // Create the vmap.
     val vmap = new JHashMap[Vid, (VD, Status)]
     val fetcher = SparkEnv.get.shuffleFetcher
-    fetcher.fetch[Pid, (Vid, (VD, Status))](shuffleId, split.index).foreach {
-      case ( key: Pid, value:  (Vid, (VD, Status)) ) => vmap.put(value._1, value._2)
+    fetcher.fetch[Pid, (Vid, VD, Status)](shuffleId, split.index).foreach {
+      case ( pid, (vid, vData, isActive) ) => vmap.put(vid, (vData, isActive))
     }
 
     eTable.iterator(split.eTableSplit, context).flatMap { case(_, (srcId, dstId, edgeData)) =>

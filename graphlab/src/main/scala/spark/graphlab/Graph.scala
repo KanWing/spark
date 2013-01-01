@@ -90,18 +90,22 @@ class Graph[VD: Manifest, ED: Manifest](
       }.partitionBy(new HashPartitioner(numProcs), false).cache()
 
     // The master vertices are used during the apply phase
-    var vTable = vertices.map { case (vid, vdata) => (vid, (vdata, true)) }.cache()
+    val vTablePartitioner = new HashPartitioner(numProcs)
 
-    // Create a map from vertex id to the partitions that contain that vertex
-    // (vid, pid)
-    val vid2pid: RDD[(Vid, Pid)] = eTable.flatMap {
-      case (pid, (source, target, _)) => List((source, pid), (target, pid))
-    }.distinct().cache() // what is the role of the number of bins?
+    var vTable = vertices.partitionBy(vTablePartitioner)
+      .leftOuterJoin(eTable.flatMap { 
+        case (pid, (source, target, _)) => List((source,pid), (target,pid)) 
+        }.groupByKey(vTablePartitioner))
+      .mapValues {
+        case (vdata, None) => (vdata, true, Array.empty[Pid])
+        case (vdata, Some(pids)) => (vdata, true, pids.toArray)
+      }.cache()
 
-    // TODO: rewrite this with accumulator.
-    val replicationFactor = vid2pid.count().toDouble / vTable.count().toDouble
-    println("Replication Factor: " + replicationFactor)
-    println("Edge table size: " + eTable.count.toInt)
+
+    // // TODO: rewrite this with accumulator.
+    // val replicationFactor = vid2pid.count().toDouble / vTable.count().toDouble
+    // println("Replication Factor: " + replicationFactor)
+    // println("Edge table size: " + eTable.count.toInt)
 
     // Loop until convergence or there are no active vertices
     var iter = 0
@@ -115,7 +119,7 @@ class Graph[VD: Manifest, ED: Manifest](
 
       iter += 1
 
-      val gatherTable = new GraphShardRDD(vTable, vid2pid, eTable, { edge: Edge[VD, ED] =>
+      val gatherTable = new GraphShardRDD(vTable, eTable, { edge: Edge[VD, ED] =>
         var accum = List.empty[(Vid, A)]
         if (edge.target.status && (gatherEdges == EdgeDirection.In ||
           gatherEdges == EdgeDirection.Both)) { // gather on the target
@@ -126,20 +130,20 @@ class Graph[VD: Manifest, ED: Manifest](
           accum ++= List((edge.source.id, gather(edge.source.id, edge)))
         }
         accum
-      }).reduceByKey(merge)
+      }).reduceByKey(merge).partitionBy(vTablePartitioner)
 
       // Apply Phase ---------------------------------------------
       // Merge with the gather result
       vTable = vTable.leftOuterJoin(gatherTable).mapPartitions(
         iter => iter.map { // Execute the apply if necessary
-          case (vid, ((data, true), Some(accum))) =>
-            (vid, (apply(new Vertex[VD](vid, data), accum), true))
-          case (vid, ((data, true), None)) =>
-            (vid, (apply(new Vertex[VD](vid, data), default), true))
-          case (vid, ((data, false), _)) => (vid, (data, false))
-        }, true).cache()
+          case (vid, ((data, true, pids), Some(accum))) =>
+            (vid, (apply(new Vertex[VD](vid, data), accum), true, pids))
+          case (vid, ((data, true, pids), None)) =>
+            (vid, (apply(new Vertex[VD](vid, data), default), true, pids))
+          case (vid, ((data, false, pids), _)) => (vid, (data, false, pids))
+        }, true).partitionBy(vTablePartitioner).cache()
 
-      val scatterTable = new GraphShardRDD(vTable, vid2pid, eTable, { edge: Edge[VD, ED] =>
+      val scatterTable = new GraphShardRDD(vTable, eTable, { edge: Edge[VD, ED] =>
         //var accum = List.empty[(Vid, Boolean)]
         (if (edge.target.status && (scatterEdges == EdgeDirection.In ||
           scatterEdges == EdgeDirection.Both)) { // gather on the target
@@ -149,17 +153,17 @@ class Graph[VD: Manifest, ED: Manifest](
           scatterEdges == EdgeDirection.Both)) { // gather on the source
           List((edge.target.id, scatter(edge.source.id, edge)))
         } else List.empty)
-      }).reduceByKey(_ || _)
+      }).reduceByKey(_ || _).partitionBy(vTablePartitioner)
 
       // update active vertices
       vTable = vTable.leftOuterJoin(scatterTable).map {
-        case (vid, ((vdata, _), Some(new_active))) => (vid, (vdata, new_active))
-        case (vid, ((vdata, _), None)) => (vid, (vdata, false))
+        case (vid, ((vdata, _, pids), Some(new_active))) => (vid, (vdata, new_active, pids))
+        case (vid, ((vdata, _, pids), None)) => (vid, (vdata, false, pids))
       }.cache()
 
       // Compute the number active
       numActive = vTable.map {
-        case (_, (_, active)) => if (active) 1 else 0
+        case (_, (_, active, pids)) => if (active) 1 else 0
       }.reduce(_ + _);
 
     }
@@ -167,7 +171,7 @@ class Graph[VD: Manifest, ED: Manifest](
     println("Finished in " + iter + " iterations.")
 
     // Collapse vreplicas, edges and retuen a new graph
-    new Graph(vTable.map { case (vid, (vdata, _)) => (vid, vdata) },
+    new Graph(vTable.map { case (vid, (vdata, _, _)) => (vid, vdata) },
       eTable.map { case (pid, (source, target, edata)) => (source, target, edata) })
   } // End of iterate
 
