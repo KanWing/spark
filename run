@@ -45,7 +45,7 @@ fi
 # Figure out how much memory to use per executor and set it as an environment
 # variable so that our process sees it and can report it to Mesos
 if [ -z "$SPARK_MEM" ] ; then
-  SPARK_MEM="24G"
+  SPARK_MEM="4G"
 fi
 export SPARK_MEM
 

@@ -14,7 +14,7 @@ object Analytics {
       case (src, target, data) => Array((src, 1), (target, 0))
     }.reduceByKey(_ + _)
 
-    // Construct the pagerank graph with 
+    // Construct the pagerank graph with
     //   vertex data: (Degree, Rank, OldRank)
     //   edge data: None
     val vertices = outDegree.mapValues(deg => (deg, 1.0F, 1.0F))
@@ -23,18 +23,21 @@ object Analytics {
     // Run PageRank
     pageRankGraph.iterate(
       (me_id, edge) => {
-        val Edge(Vertex(_, (degree, rank, _)), _, edata) = edge
-        rank / degree
+        // val Edge(Vertex(_, (degree, rank, _)), _, edata) = edge
+        // rank / degree
+        edge.source.data._2 / edge.source.data._1
       }, // gather
       (a: Float, b: Float) => a + b, // merge
       0F,
       (vertex, a: Float) => {
-        val Vertex(vid, (out_degree, rank, old_rank)) = vertex
-        (out_degree, (0.15F + 0.85F * a), rank)
+        // val Vertex(vid, (out_degree, rank, old_rank)) = vertex
+        // (out_degree, (0.15F + 0.85F * a), rank)
+        (vertex.data._1, (0.15F + 0.85F * a), vertex.data._2)
       }, // apply
       (me_id, edge) => {
-        val Edge(Vertex(_, (_, new_rank, old_rank)), _, edata) = edge
-        math.abs(new_rank - old_rank) > 0.01
+        // val Edge(Vertex(_, (_, new_rank, old_rank)), _, edata) = edge
+        // math.abs(new_rank - old_rank) > 0.01
+        math.abs(edge.source.data._2 - edge.source.data._1) > 0.01
       }, // scatter
       maxIter).vertices.mapValues { case (degree, rank, oldRank) => rank }
     //    println("Computed graph: #edges: " + graph_ret.numEdges + "  #vertices" + graph_ret.numVertices)
@@ -63,7 +66,7 @@ object Analytics {
       niterations,
       gatherEdges = EdgeDirection.Both,
       scatterEdges = EdgeDirection.Both).vertices
-    //      
+    //
     //    graph_ret.vertices.collect.foreach(println)
     //    graph_ret.edges.take(10).foreach(println)
   }
@@ -71,6 +74,10 @@ object Analytics {
   def main(args: Array[String]) = {
     val host = args(0)
     val fname = args(1)
+
+    //System.setProperty("spark.serializer", "spark.KryoSerializer")
+    //System.setProperty("spark.kryo.registrator", "mypackage.MyRegistrator")
+
     val sc = new SparkContext(host, "Analytics")
     println("One Iteration of PageRank on a large real graph")
     //    val graph = Graph.fromURL(sc, "http://parallel.ml.cmu.edu/share/google.tsv", a => true)

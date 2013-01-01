@@ -235,14 +235,14 @@ class BlockManager(
 
     // As an optimization for map output fetches, if the block is for a shuffle, return it
     // without acquiring a lock; the disk store never deletes (recent) items so this should work
-    if (blockId.startsWith("shuffle_")) {
-      return diskStore.getValues(blockId) match {
-        case Some(iterator) =>
-          Some(iterator)
-        case None =>
-          throw new Exception("Block " + blockId + " not found on disk, though it should be")
-      }
-    }
+    // if (blockId.startsWith("shuffle_")) {
+    //   return diskStore.getValues(blockId) match {
+    //     case Some(iterator) =>
+    //       Some(iterator)
+    //     case None =>
+    //       throw new Exception("Block " + blockId + " not found on disk, though it should be")
+    //   }
+    // }
 
     val info = blockInfo.get(blockId).orNull
     if (info != null) {
@@ -320,14 +320,14 @@ class BlockManager(
 
     // As an optimization for map output fetches, if the block is for a shuffle, return it
     // without acquiring a lock; the disk store never deletes (recent) items so this should work
-    if (blockId.startsWith("shuffle_")) {
-      return diskStore.getBytes(blockId) match {
-        case Some(bytes) =>
-          Some(bytes)
-        case None =>
-          throw new Exception("Block " + blockId + " not found on disk, though it should be")
-      }
-    }
+    // if (blockId.startsWith("shuffle_")) {
+    //   return diskStore.getBytes(blockId) match {
+    //     case Some(bytes) =>
+    //       Some(bytes)
+    //     case None =>
+    //       throw new Exception("Block " + blockId + " not found on disk, though it should be")
+    //   }
+    // }
 
     val info = blockInfo.get(blockId).orNull
     if (info != null) {
