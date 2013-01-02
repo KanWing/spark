@@ -61,7 +61,7 @@ class Graph[VD: Manifest, ED: Manifest](
    * gather: (center_vid, edge) => accumulator
    * Todo: Finish commenting
    */
-  def iterate[A: Manifest](
+  def iterateDynamic[A: Manifest](
     gather: (Vid, Edge[VD, ED]) => A,
     merge: (A, A) => A,
     default: A,
@@ -76,6 +76,7 @@ class Graph[VD: Manifest, ED: Manifest](
     ClosureCleaner.clean(apply)
     ClosureCleaner.clean(scatter)
 
+    val sc = edges.context
     val numProcs = 10
 
     // Partition the edges over machines.  The part_edges table has the format
@@ -109,40 +110,40 @@ class Graph[VD: Manifest, ED: Manifest](
 
     // Loop until convergence or there are no active vertices
     var iter = 0
+    // val numActive = sc.accumulator(vTable.count.toInt)
     var numActive = vTable.filter(_._2._2).count
 
+//    while (iter < niter && numActive.value > 0) {
     while (iter < niter && numActive > 0) {
       // Begin iteration
       println("\n\n==========================================================")
       println("Begin iteration: " + iter)
       println("Active:          " + numActive)
 
-      iter += 1
-
+      // Gather Phase =========================================================
       val gatherTable = new GraphShardRDD(vTable, eTable, { edge: Edge[VD, ED] =>
-        var accum = List.empty[(Vid, A)]
-        if (edge.target.status && (gatherEdges == EdgeDirection.In ||
+        (if (edge.target.status && (gatherEdges == EdgeDirection.In ||
           gatherEdges == EdgeDirection.Both)) { // gather on the target
-          accum ++= List((edge.target.id, gather(edge.target.id, edge)))
-        }
-        if (edge.source.status && (gatherEdges == EdgeDirection.Out ||
+          List((edge.target.id, gather(edge.target.id, edge)))
+        } else List.empty) ++
+        (if (edge.source.status && (gatherEdges == EdgeDirection.Out ||
           gatherEdges == EdgeDirection.Both)) { // gather on the source
-          accum ++= List((edge.source.id, gather(edge.source.id, edge)))
-        }
-        accum
-      }).reduceByKey(merge).partitionBy(vTablePartitioner)
+          List((edge.source.id, gather(edge.source.id, edge)))
+        } else List.empty)
+      }).reduceByKey(vTablePartitioner, merge)
 
-      // Apply Phase ---------------------------------------------
+      // Apply Phase ===========================================================
       // Merge with the gather result
       vTable = vTable.leftOuterJoin(gatherTable).mapPartitions(
         iter => iter.map { // Execute the apply if necessary
           case (vid, ((data, true, pids), Some(accum))) =>
-            (vid, (apply(new Vertex[VD](vid, data), accum), true, pids))
+            (vid, (apply(new Vertex(vid, data), accum), true, pids))
           case (vid, ((data, true, pids), None)) =>
-            (vid, (apply(new Vertex[VD](vid, data), default), true, pids))
+            (vid, (apply(new Vertex(vid, data), default), true, pids))
           case (vid, ((data, false, pids), _)) => (vid, (data, false, pids))
-        }, true).partitionBy(vTablePartitioner).cache()
+        }, preservesPartitioning = true).cache()
 
+      // Scatter Phase =========================================================
       val scatterTable = new GraphShardRDD(vTable, eTable, { edge: Edge[VD, ED] =>
         //var accum = List.empty[(Vid, Boolean)]
         (if (edge.target.status && (scatterEdges == EdgeDirection.In ||
@@ -153,19 +154,20 @@ class Graph[VD: Manifest, ED: Manifest](
           scatterEdges == EdgeDirection.Both)) { // gather on the source
           List((edge.target.id, scatter(edge.source.id, edge)))
         } else List.empty)
-      }).reduceByKey(_ || _).partitionBy(vTablePartitioner)
+      }).reduceByKey(vTablePartitioner, _ || _)
 
       // update active vertices
+      
       vTable = vTable.leftOuterJoin(scatterTable).map {
-        case (vid, ((vdata, _, pids), Some(new_active))) => (vid, (vdata, new_active, pids))
+        case (vid, ((vdata, _, pids), Some(isActive))) => {
+//          numActive += (if(isActive) 1 else 0)
+          (vid, (vdata, isActive, pids))
+        }
         case (vid, ((vdata, _, pids), None)) => (vid, (vdata, false, pids))
       }.cache()
-
-      // Compute the number active
-      numActive = vTable.map {
-        case (_, (_, active, pids)) => if (active) 1 else 0
-      }.reduce(_ + _);
-
+//      vTable.foreach(record => (if(record._2._2) 1 else 0)
+      numActive = vTable.filter(_._2._2).count
+      iter += 1
     }
     println("=========================================")
     println("Finished in " + iter + " iterations.")
@@ -174,6 +176,92 @@ class Graph[VD: Manifest, ED: Manifest](
     new Graph(vTable.map { case (vid, (vdata, _, _)) => (vid, vdata) },
       eTable.map { case (pid, (source, target, edata)) => (source, target, edata) })
   } // End of iterate
+
+
+
+/**
+   * Execute the synchronous powergraph abstraction.
+   *
+   * gather: (center_vid, edge) => accumulator
+   * Todo: Finish commenting
+   */
+  def iterateStatic[A: Manifest](
+    gather: (Vid, Edge[VD, ED]) => A,
+    merge: (A, A) => A,
+    default: A,
+    apply: (Vertex[VD], A) => VD,
+    numIter: Int,
+    gatherEdges: EdgeDirection.Value = EdgeDirection.In) = {
+
+    ClosureCleaner.clean(gather)
+    ClosureCleaner.clean(merge)
+    ClosureCleaner.clean(apply)
+
+    val sc = edges.context
+    val numProcs = 10
+
+    // Partition the edges over machines.  The part_edges table has the format
+    // ((pid, source), (target, data))
+    var eTable =
+      edges.map {
+        case (source, target, data) => {
+          // val pid = abs((source, target).hashCode()) % numProcs
+          val pid = math.abs(source.hashCode()) % numProcs
+          (pid, (source, target, data))
+        }
+      }.partitionBy(new HashPartitioner(numProcs), false).cache()
+
+    // The master vertices are used during the apply phase
+    val vTablePartitioner = new HashPartitioner(numProcs)
+
+    var vTable = vertices.partitionBy(vTablePartitioner)
+      .leftOuterJoin(eTable.flatMap { 
+        case (pid, (source, target, _)) => List((source,pid), (target,pid)) 
+        }.groupByKey(vTablePartitioner))
+      .mapValues {
+        case (vdata, None) => (vdata, true, Array.empty[Pid])
+        case (vdata, Some(pids)) => (vdata, true, pids.toArray)
+      }
+
+    // Loop until convergence or there are no active vertices
+    var iter = 0
+    while (iter < numIter)  {
+
+      // Gather Phase =========================================================
+      val gatherTable = new GraphShardRDD(vTable, eTable, { edge: Edge[VD, ED] =>
+        (if (edge.target.status && (gatherEdges == EdgeDirection.In ||
+          gatherEdges == EdgeDirection.Both)) { // gather on the target
+          List((edge.target.id, gather(edge.target.id, edge)))
+        } else List.empty) ++
+        (if (edge.source.status && (gatherEdges == EdgeDirection.Out ||
+          gatherEdges == EdgeDirection.Both)) { // gather on the source
+          List((edge.source.id, gather(edge.source.id, edge)))
+        } else List.empty)
+      }).reduceByKey(vTablePartitioner, merge)
+
+      // Apply Phase ===========================================================
+      // Merge with the gather result
+      vTable = vTable.leftOuterJoin(gatherTable).mapPartitions(
+        iter => iter.map { // Execute the apply if necessary
+          case (vid, ((data, true, pids), Some(accum))) =>
+            (vid, (apply(new Vertex(vid, data), accum), true, pids))
+          case (vid, ((data, true, pids), None)) =>
+            (vid, (apply(new Vertex(vid, data), default), true, pids))
+          case (vid, ((data, false, pids), _)) => (vid, (data, false, pids))
+        }, preservesPartitioning = true)  
+
+      // end of iteration
+      iter += 1
+    }
+
+    // Collapse vreplicas, edges and retuen a new graph
+    new Graph(vTable.map { case (vid, (vdata, _, _)) => (vid, vdata) },
+      eTable.map { case (pid, (source, target, edata)) => (source, target, edata) })
+  } // End of iterate
+
+
+
+
 
 } // End of Graph RDD
 

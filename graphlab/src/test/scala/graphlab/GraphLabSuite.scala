@@ -40,23 +40,62 @@ class GraphLabSuite extends FunSuite with Assertions with BeforeAndAfter {
     assert(numEdges == numVertices)
   }
 
-  test("SingleConnectedComponent") {
-    println("Testing Single Connected Components")
+  test("SingleConnectedComponent:Dynamic") {
+    println("[Dyanmic] Testing Single Connected Components")
     val graph = Graph.ballAndChain(sc)
-    val ccId = Analytics.connectedComponents(graph)
+    val ccId = Analytics.dynamicConnectedComponents(graph)
     val all1 = ccId.map(_._2 == 1).reduce(_ && _)
     assert(all1)
   }
   
-  test("KCycleConnectedComponents") {
-    println("Testing K Connected Components")
+  test("KCycleConnectedComponents:Dynamic") {
+    println("[Dynamic] Testing K Connected Components")
     val graph = Graph.kCycles(sc, 1000, 10)
-    val ccId = Analytics.connectedComponents(graph)
+    val ccId = Analytics.dynamicConnectedComponents(graph)
     val allAgree = ccId.join(graph.vertices).map {
       case (vid, (ccId, origId)) => ccId == origId
     }.reduce(_ && _)
     assert(allAgree)
   }
+
+
+
+  test("LazySingleConnectedComponent:Static") {
+    println("[Static] Testing Single Connected Components")
+    val graph = Graph.ballAndChain(sc)
+    println("Making solution RDD")
+    val ccId = Analytics.connectedComponents(graph, 5)
+    println("Solution RDD constructed !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+    val all1 = ccId.map(_._2 == 1).reduce(_ && _)
+    assert(all1)
+  }
+ 
+
+  test("LazyKCycleConnectedComponents:Static") {
+    println("[Static] Testing K Connected Components")
+    val graph = Graph.kCycles(sc, 1000, 10)
+    println("Making solution RDD")
+    val ccId = Analytics.connectedComponents(graph, 5)
+    println("Solution RDD constructed !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+    val allAgree = ccId.join(graph.vertices).map {
+      case (vid, (ccId, origId)) => ccId == origId
+    }.reduce(_ && _)
+    assert(allAgree)
+  }
+
+    test("LazyKCycleConnectedComponents2:Static") {
+    println("Testing K Connected Components")
+    val graph = Graph.kCycles(sc, 1000, 10)
+    println("Making solution RDD (for wrong iteration count)")
+    val ccId = Analytics.connectedComponents(graph, 2)
+    println("Solution RDD constructed !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+    val allAgree = ccId.join(graph.vertices).map {
+      case (vid, (ccId, origId)) => ccId == origId
+    }.reduce(_ && _)
+    assert(!allAgree)
+  }
+
+
 
 //  
 //   test("GooglePageRank") {
