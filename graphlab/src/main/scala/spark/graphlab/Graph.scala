@@ -157,14 +157,13 @@ class Graph[VD: Manifest, ED: Manifest](
       }).reduceByKey(vTablePartitioner, _ || _)
 
       // update active vertices
-      
-      vTable = vTable.leftOuterJoin(scatterTable).map {
+      vTable = vTable.leftOuterJoin(scatterTable).mapPartitions( _.map{
         case (vid, ((vdata, _, pids), Some(isActive))) => {
 //          numActive += (if(isActive) 1 else 0)
           (vid, (vdata, isActive, pids))
         }
         case (vid, ((vdata, _, pids), None)) => (vid, (vdata, false, pids))
-      }.cache()
+      }, preservesPartitioning = true).cache()
 //      vTable.foreach(record => (if(record._2._2) 1 else 0)
       numActive = vTable.filter(_._2._2).count
       iter += 1
@@ -198,7 +197,7 @@ class Graph[VD: Manifest, ED: Manifest](
     ClosureCleaner.clean(apply)
 
     val sc = edges.context
-    val numProcs = 10
+    val numProcs = 100
 
     // Partition the edges over machines.  The part_edges table has the format
     // ((pid, source), (target, data))

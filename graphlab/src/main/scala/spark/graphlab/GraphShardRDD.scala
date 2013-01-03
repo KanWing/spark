@@ -62,6 +62,8 @@ class GraphShardRDD[VD, ED, U](
     println("GraphShardRDD.compute")
     println("================================================================")
 
+    var startTime = System.currentTimeMillis
+
     val split = s.asInstanceOf[GraphShardSplit]
     // Create the vmap.
     val vmap = new JHashMap[Vid, (VD, Status)]
@@ -70,10 +72,14 @@ class GraphShardRDD[VD, ED, U](
       case ( pid, (vid, vData, isActive) ) => vmap.put(vid, (vData, isActive))
     }
 
-    eTable.iterator(split.eTableSplit, context).flatMap { case(_, (srcId, dstId, edgeData)) =>
+    println("FetchedSplits:  " + ((System.currentTimeMillis - startTime)/1000.0))
+    startTime = System.currentTimeMillis
+    val result = eTable.iterator(split.eTableSplit, context).flatMap { case(_, (srcId, dstId, edgeData)) =>
       val (srcData, srcStatus)  = vmap.get(srcId)
       val (dstData, dstStatus) = vmap.get(dstId)
       f(Edge(Vertex(srcId, srcData, srcStatus), Vertex(dstId, dstData, dstStatus), edgeData))
     }
+    println("ComputeTime:    " + ((System.currentTimeMillis - startTime)/1000.0))
+    result
   }
 }

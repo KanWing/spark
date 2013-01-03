@@ -206,7 +206,7 @@ object Analytics {
       }
     }
 
-    //System.setProperty("spark.serializer", "spark.KryoSerializer")
+    System.setProperty("spark.serializer", "spark.KryoSerializer")
     //System.setProperty("spark.kryo.registrator", "mypackage.MyRegistrator")
 
     taskType match {
@@ -235,9 +235,11 @@ object Analytics {
 
         val sc = new SparkContext(host, "PageRank(" + fname + ")")
         val graph = Graph.textFile(sc, fname, a => 1)
+        val startTime = System.currentTimeMillis
         val pr = if(isDynamic) Analytics.dynamicPageRank(graph, numIter)
           else  Analytics.pageRank(graph, numIter)
         println("Total rank: " + pr.map(_._2).reduce(_+_))           
+        println("Runtime:    " + ((System.currentTimeMillis - startTime)/1000.0) + " seconds")
         sc.stop()
       }
 
