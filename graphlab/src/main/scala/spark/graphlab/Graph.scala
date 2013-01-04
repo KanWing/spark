@@ -13,7 +13,6 @@ import spark.RDD
  */
 case class Vertex[VD](val id: Vid, val data: VD, val status: Status = true)
 
-
 /**
  * Class containing both vertices and the edge data associated with an edge
  */
@@ -21,6 +20,45 @@ case class Edge[VD, ED](val source: Vertex[VD], val target: Vertex[VD], val data
   def otherVertex(vid: Vid) = { if (source.id == vid) target else source; }
   def vertex(vid: Vid) = { if (source.id == vid) source else target; }
 } // end of class edge
+
+
+case class EdgeRecord[ED](val sourceId: Vid, val targetId: Vid, val data: ED) 
+
+case class VertexReplica[VD](val id: Vid, val data: VD, 
+  val isActive: Status) 
+
+case class VertexRecord[VD](val data: VD, val isActive: Status, 
+  val pids: Array[Pid]) {
+  def replicate(id: Vid) = pids.iterator.map(pid => (pid, VertexReplica(id, data, isActive)))
+}
+
+
+
+// class KeyedRecord with Serializable { def key : Pid }
+// class KeyedPartitioner(val numPartitions: Int = 123) extends spark.Partitioner {
+//   def getPartition(key: Any) : Int = 
+//     math.abs(key.asInstanceOf[KeyedRecord].key) % numPartitions
+//   override def equals(other: Any) = other match {
+//     case other: KeyedPartitioner => numPartitions == other.numPartitions
+//     case _ => false
+//   }
+//   override def equals(other: Any) = 
+//     other.isInstanceOf[PidVidPartitioner] &&
+// }
+// case class EdgeRecord[ED](val sourceId: Vid, val targetId: Vid, 
+//   val data: ED) extends KeyedRecord with Serializable {
+//   def key = sourceId
+// }
+// case class VertexReplica[VD](val pid: Pid, val id: Vid, val data: VD, 
+//   val isActive: Status) with Serializable {
+//   def key = pid
+// }
+// case class VertexRecord[VD](val id: Vid, val data: VD, 
+//   val isActive: Status, val pids: Array[Pid]) with Serializable {
+//   def replicate() = pids.map(pid => VertexReplica(pid, vid, data, isActive))
+//   def key = id
+// }
+
 
 
 object EdgeDirection extends Enumeration {
@@ -85,8 +123,8 @@ class Graph[VD: Manifest, ED: Manifest](
       edges.map {
         case (source, target, data) => {
           // val pid = abs((source, target).hashCode()) % numProcs
-          val pid = math.abs(source.hashCode()) % numProcs
-          (pid, (source, target, data))
+          val pid = math.abs(source) % numProcs
+          (pid, EdgeRecord(source, target, data) )
         }
       }.partitionBy(new HashPartitioner(numProcs), false).cache()
 
@@ -95,11 +133,12 @@ class Graph[VD: Manifest, ED: Manifest](
 
     var vTable = vertices.partitionBy(vTablePartitioner)
       .leftOuterJoin(eTable.flatMap { 
-        case (pid, (source, target, _)) => List((source,pid), (target,pid)) 
+        case (pid, EdgeRecord(source, target, _)) => 
+          List((source,pid), (target,pid)) 
         }.groupByKey(vTablePartitioner))
       .mapValues {
-        case (vdata, None) => (vdata, true, Array.empty[Pid])
-        case (vdata, Some(pids)) => (vdata, true, pids.toArray)
+        case (vdata, None) => VertexRecord(vdata, true, Array.empty[Pid])
+        case (vdata, Some(pids)) => VertexRecord(vdata, true, pids.toArray)
       }.cache()
 
 
@@ -110,11 +149,11 @@ class Graph[VD: Manifest, ED: Manifest](
 
     // Loop until convergence or there are no active vertices
     var iter = 0
-    // val numActive = sc.accumulator(vTable.count.toInt)
-    var numActive = vTable.filter(_._2._2).count
+    val numActive = sc.accumulator(vTable.count.toInt)
+    // var numActive = vTable.filter(_._2._2).count
 
-//    while (iter < niter && numActive.value > 0) {
-    while (iter < niter && numActive > 0) {
+    while (iter < niter && numActive.value > 0) {
+    // while (iter < niter && numActive > 0) {
       // Begin iteration
       println("\n\n==========================================================")
       println("Begin iteration: " + iter)
@@ -136,11 +175,12 @@ class Graph[VD: Manifest, ED: Manifest](
       // Merge with the gather result
       vTable = vTable.leftOuterJoin(gatherTable).mapPartitions(
         iter => iter.map { // Execute the apply if necessary
-          case (vid, ((data, true, pids), Some(accum))) =>
-            (vid, (apply(new Vertex(vid, data), accum), true, pids))
-          case (vid, ((data, true, pids), None)) =>
-            (vid, (apply(new Vertex(vid, data), default), true, pids))
-          case (vid, ((data, false, pids), _)) => (vid, (data, false, pids))
+          case (vid, (VertexRecord(data, true, pids), Some(accum))) =>
+            (vid, VertexRecord(apply(new Vertex(vid, data), accum), true, pids))
+          case (vid, (VertexRecord(data, true, pids), None)) =>
+            (vid, VertexRecord(apply(new Vertex(vid, data), default), true, pids))
+          case (vid, (VertexRecord(data, false, pids), _)) => 
+            (vid, VertexRecord(data, false, pids))
         }, preservesPartitioning = true).cache()
 
       // Scatter Phase =========================================================
@@ -157,23 +197,26 @@ class Graph[VD: Manifest, ED: Manifest](
       }).reduceByKey(vTablePartitioner, _ || _)
 
       // update active vertices
+      numActive.value = 0
       vTable = vTable.leftOuterJoin(scatterTable).mapPartitions( _.map{
-        case (vid, ((vdata, _, pids), Some(isActive))) => {
-//          numActive += (if(isActive) 1 else 0)
-          (vid, (vdata, isActive, pids))
+        case (vid, (VertexRecord(vdata, _, pids), Some(isActive))) => {
+          numActive += (if(isActive) 1 else 0)
+          (vid, VertexRecord(vdata, isActive, pids))
         }
-        case (vid, ((vdata, _, pids), None)) => (vid, (vdata, false, pids))
+        case (vid, (VertexRecord(vdata, _, pids), None)) => 
+          (vid, VertexRecord(vdata, false, pids))
       }, preservesPartitioning = true).cache()
-//      vTable.foreach(record => (if(record._2._2) 1 else 0)
-      numActive = vTable.filter(_._2._2).count
+      vTable.foreach(i => ())
+      //numActive = vTable.filter(_._2._2).count
+      
       iter += 1
     }
     println("=========================================")
     println("Finished in " + iter + " iterations.")
 
     // Collapse vreplicas, edges and retuen a new graph
-    new Graph(vTable.map { case (vid, (vdata, _, _)) => (vid, vdata) },
-      eTable.map { case (pid, (source, target, edata)) => (source, target, edata) })
+    new Graph(vTable.map { case (vid, VertexRecord(vdata, _, _)) => (vid, vdata) },
+      eTable.map { case (pid, EdgeRecord(source, target, edata)) => (source, target, edata) })
   } // End of iterate
 
 
@@ -206,7 +249,7 @@ class Graph[VD: Manifest, ED: Manifest](
         case (source, target, data) => {
           // val pid = abs((source, target).hashCode()) % numProcs
           val pid = math.abs(source.hashCode()) % numProcs
-          (pid, (source, target, data))
+          (pid, EdgeRecord(source, target, data))
         }
       }.partitionBy(new HashPartitioner(numProcs), false).cache()
 
@@ -215,11 +258,11 @@ class Graph[VD: Manifest, ED: Manifest](
 
     var vTable = vertices.partitionBy(vTablePartitioner)
       .leftOuterJoin(eTable.flatMap { 
-        case (pid, (source, target, _)) => List((source,pid), (target,pid)) 
+        case (pid, EdgeRecord(source, target, _)) => List((source,pid), (target,pid)) 
         }.groupByKey(vTablePartitioner))
       .mapValues {
-        case (vdata, None) => (vdata, true, Array.empty[Pid])
-        case (vdata, Some(pids)) => (vdata, true, pids.toArray)
+        case (vdata, None) => VertexRecord(vdata, true, Array.empty[Pid])
+        case (vdata, Some(pids)) => VertexRecord(vdata, true, pids.toArray)
       }
 
     // Loop until convergence or there are no active vertices
@@ -242,11 +285,12 @@ class Graph[VD: Manifest, ED: Manifest](
       // Merge with the gather result
       vTable = vTable.leftOuterJoin(gatherTable).mapPartitions(
         iter => iter.map { // Execute the apply if necessary
-          case (vid, ((data, true, pids), Some(accum))) =>
-            (vid, (apply(new Vertex(vid, data), accum), true, pids))
-          case (vid, ((data, true, pids), None)) =>
-            (vid, (apply(new Vertex(vid, data), default), true, pids))
-          case (vid, ((data, false, pids), _)) => (vid, (data, false, pids))
+          case (vid, (VertexRecord(data, true, pids), Some(accum))) =>
+            (vid, VertexRecord(apply(new Vertex(vid, data), accum), true, pids))
+          case (vid, (VertexRecord(data, true, pids), None)) =>
+            (vid, VertexRecord(apply(new Vertex(vid, data), default), true, pids))
+          case (vid, (VertexRecord(data, false, pids), _)) => 
+            (vid, VertexRecord(data, false, pids))
         }, preservesPartitioning = true)  
 
       // end of iteration
@@ -254,8 +298,8 @@ class Graph[VD: Manifest, ED: Manifest](
     }
 
     // Collapse vreplicas, edges and retuen a new graph
-    new Graph(vTable.map { case (vid, (vdata, _, _)) => (vid, vdata) },
-      eTable.map { case (pid, (source, target, edata)) => (source, target, edata) })
+    new Graph(vTable.map { case (vid, VertexRecord(vdata, _, _)) => (vid, vdata) },
+      eTable.map { case (pid, EdgeRecord(source, target, edata)) => (source, target, edata) })
   } // End of iterate
 
 
