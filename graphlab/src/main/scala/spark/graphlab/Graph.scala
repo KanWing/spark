@@ -11,7 +11,7 @@ import spark.RDD
 /**
  * Class containing the id and value of a vertex
  */
-case class Vertex[VD](val id: Vid, val data: VD, val status: Status = true)
+case class Vertex[VD](val id: Vid, val data: VD, val isActive: Status = true)
 
 /**
  * Class containing both vertices and the edge data associated with an edge
@@ -32,32 +32,6 @@ case class VertexRecord[VD](val data: VD, val isActive: Status,
   def replicate(id: Vid) = pids.iterator.map(pid => (pid, VertexReplica(id, data, isActive)))
 }
 
-
-
-// class KeyedRecord with Serializable { def key : Pid }
-// class KeyedPartitioner(val numPartitions: Int = 123) extends spark.Partitioner {
-//   def getPartition(key: Any) : Int = 
-//     math.abs(key.asInstanceOf[KeyedRecord].key) % numPartitions
-//   override def equals(other: Any) = other match {
-//     case other: KeyedPartitioner => numPartitions == other.numPartitions
-//     case _ => false
-//   }
-//   override def equals(other: Any) = 
-//     other.isInstanceOf[PidVidPartitioner] &&
-// }
-// case class EdgeRecord[ED](val sourceId: Vid, val targetId: Vid, 
-//   val data: ED) extends KeyedRecord with Serializable {
-//   def key = sourceId
-// }
-// case class VertexReplica[VD](val pid: Pid, val id: Vid, val data: VD, 
-//   val isActive: Status) with Serializable {
-//   def key = pid
-// }
-// case class VertexRecord[VD](val id: Vid, val data: VD, 
-//   val isActive: Status, val pids: Array[Pid]) with Serializable {
-//   def replicate() = pids.map(pid => VertexReplica(pid, vid, data, isActive))
-//   def key = id
-// }
 
 
 
@@ -160,16 +134,17 @@ class Graph[VD: Manifest, ED: Manifest](
       println("Active:          " + numActive)
 
       // Gather Phase =========================================================
-      val gatherTable = new GraphShardRDD(vTable, eTable, { edge: Edge[VD, ED] =>
-        (if (edge.target.status && (gatherEdges == EdgeDirection.In ||
+      val gatherTable = new GraphShardRDD(vTable, eTable, 
+        { edge: Edge[VD, ED] =>
+        (if (edge.target.isActive && (gatherEdges == EdgeDirection.In ||
           gatherEdges == EdgeDirection.Both)) { // gather on the target
           List((edge.target.id, gather(edge.target.id, edge)))
         } else List.empty) ++
-        (if (edge.source.status && (gatherEdges == EdgeDirection.Out ||
+        (if (edge.source.isActive && (gatherEdges == EdgeDirection.Out ||
           gatherEdges == EdgeDirection.Both)) { // gather on the source
           List((edge.source.id, gather(edge.source.id, edge)))
         } else List.empty)
-      }).reduceByKey(vTablePartitioner, merge)
+      }, merge).reduceByKey(vTablePartitioner, merge)
 
       // Apply Phase ===========================================================
       // Merge with the gather result
@@ -184,17 +159,18 @@ class Graph[VD: Manifest, ED: Manifest](
         }, preservesPartitioning = true).cache()
 
       // Scatter Phase =========================================================
-      val scatterTable = new GraphShardRDD(vTable, eTable, { edge: Edge[VD, ED] =>
+      val scatterTable = new GraphShardRDD(vTable, eTable, 
+        { edge: Edge[VD, ED] =>
         //var accum = List.empty[(Vid, Boolean)]
-        (if (edge.target.status && (scatterEdges == EdgeDirection.In ||
+        (if (edge.target.isActive && (scatterEdges == EdgeDirection.In ||
           scatterEdges == EdgeDirection.Both)) { // gather on the target
           List((edge.source.id, scatter(edge.target.id, edge)))
         } else List.empty) ++
-        (if (edge.source.status && (scatterEdges == EdgeDirection.Out ||
+        (if (edge.source.isActive && (scatterEdges == EdgeDirection.Out ||
           scatterEdges == EdgeDirection.Both)) { // gather on the source
           List((edge.target.id, scatter(edge.source.id, edge)))
         } else List.empty)
-      }).reduceByKey(vTablePartitioner, _ || _)
+      }, (_: Boolean) || (_:Boolean)).reduceByKey(vTablePartitioner, _ || _)
 
       // update active vertices
       numActive.value = 0
@@ -240,7 +216,7 @@ class Graph[VD: Manifest, ED: Manifest](
     ClosureCleaner.clean(apply)
 
     val sc = edges.context
-    val numProcs = 100
+    val numProcs = 10
 
     // Partition the edges over machines.  The part_edges table has the format
     // ((pid, source), (target, data))
@@ -270,16 +246,17 @@ class Graph[VD: Manifest, ED: Manifest](
     while (iter < numIter)  {
 
       // Gather Phase =========================================================
-      val gatherTable = new GraphShardRDD(vTable, eTable, { edge: Edge[VD, ED] =>
-        (if (edge.target.status && (gatherEdges == EdgeDirection.In ||
+      val gatherTable = new GraphShardRDD(vTable, eTable, 
+        { edge: Edge[VD, ED] =>
+        (if (edge.target.isActive && (gatherEdges == EdgeDirection.In ||
           gatherEdges == EdgeDirection.Both)) { // gather on the target
           List((edge.target.id, gather(edge.target.id, edge)))
         } else List.empty) ++
-        (if (edge.source.status && (gatherEdges == EdgeDirection.Out ||
+        (if (edge.source.isActive && (gatherEdges == EdgeDirection.Out ||
           gatherEdges == EdgeDirection.Both)) { // gather on the source
           List((edge.source.id, gather(edge.source.id, edge)))
         } else List.empty)
-      }).reduceByKey(vTablePartitioner, merge)
+      }, merge).reduceByKey(vTablePartitioner, merge)
 
       // Apply Phase ===========================================================
       // Merge with the gather result
@@ -291,7 +268,7 @@ class Graph[VD: Manifest, ED: Manifest](
             (vid, VertexRecord(apply(new Vertex(vid, data), default), true, pids))
           case (vid, (VertexRecord(data, false, pids), _)) => 
             (vid, VertexRecord(data, false, pids))
-        }, preservesPartitioning = true)  
+        }, preservesPartitioning = true)
 
       // end of iteration
       iter += 1
