@@ -19,7 +19,10 @@ case class GraphShardSplit(idx: Int, eTableSplit: Split) extends Split {
   override def hashCode(): Int = idx
 }
 
-case class VMapRecord[VD,U](val data: VD, val isActive: Status, var accum: Option[U]) 
+case class VMapRecord[
+  @specialized(Char, Int, Boolean, Byte, Long, Float, Double)VD,
+  @specialized(Char, Int, Boolean, Byte, Long, Float, Double)U](
+  val data: VD, val isActive: Status, var accum: U, var hasAccum: Boolean = false) 
 
 private[spark] class CoGroupAggregator
   extends Aggregator[Any, Any, ArrayBuffer[Any]](
@@ -33,7 +36,8 @@ class GraphShardRDD[VD, ED, U](
     @transient vTable: spark.RDD[(Vid, VertexRecord[VD])], // vid, data, active
     eTable: spark.RDD[(Pid, EdgeRecord[ED])], // pid, src_vid, dst_vid, data
     edgeFun: Edge[VD, ED] => TraversableOnce[(Vid, U)],
-    mergeFun: (U, U) => U
+    mergeFun: (U, U) => U,
+    default: U
     ) extends RDD[(Vid, U)](eTable.context) with Logging {
 
   // Join vid2pid and vTable, generate a shuffle dependency on the joined result, and get
@@ -70,13 +74,14 @@ class GraphShardRDD[VD, ED, U](
 
     val split = s.asInstanceOf[GraphShardSplit]
     // Create the vmap.
-    val vmap = new it.unimi.dsi.fastutil.ints.Int2ReferenceOpenHashMap[VMapRecord[VD, U]](1000000) 
+    val vmap = new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap[VMapRecord[VD, U]](1000000) 
    
 
     //val vmapAgg = new Array[VD](1000000)
     val fetcher = SparkEnv.get.shuffleFetcher
     fetcher.fetch[Pid, VertexReplica[VD]](shuffleId, split.index).foreach {
-      case ( _, vrec ) => vmap.put(vrec.id, new VMapRecord[VD,U](vrec.data, vrec.isActive, Option.empty) )
+      case ( _, vrec ) => 
+      vmap.put(vrec.id, new VMapRecord[VD,U](vrec.data, vrec.isActive, default) )
     }
 
     println("FetchedSplits:  " + ((System.currentTimeMillis - startTime)/1000.0))
@@ -89,20 +94,19 @@ class GraphShardRDD[VD, ED, U](
         val dstVertex = Vertex(dstId, dst.data, dst.isActive)
         val edge = Edge(srcVertex,dstVertex, edgeData)
         edgeFun(edge).foreach{
-          case (vid, accum) if vid == srcId => src.accum match {
-            case Some(oldAccum) => src.accum = Some(mergeFun(oldAccum, accum))
-            case None => src.accum = Some(accum)
+          case (vid, accum) if vid == srcId => {
+            if(src.hasAccum) src.accum = mergeFun(src.accum, accum)
+            else src.accum = accum
           }
-          case (vid, accum) if vid == dstId => dst.accum match {
-            case Some(oldAccum) => dst.accum = Some(mergeFun(oldAccum, accum))
-            case None => dst.accum = Some(accum)
+          case (vid, accum) if vid == dstId => {
+            if(dst.hasAccum) dst.accum = mergeFun(dst.accum, accum)
+            else dst.accum = accum
           }
           case _ => throw new IllegalArgumentException("Invalid edge operation.")
         }
       }
     }
-
     println("ComputeTime:    " + ((System.currentTimeMillis - startTime)/1000.0))
-    vmap.iterator.filter(! _._2.accum.isEmpty ).map{ case (vid, rec) => (vid, rec.accum.get) }
+    vmap.iterator.filter( _._2.hasAccum ).map{ case (vid, rec) => (vid, rec.accum) }
   }
 }

@@ -11,24 +11,27 @@ import spark.RDD
 /**
  * Class containing the id and value of a vertex
  */
-case class Vertex[VD](val id: Vid, val data: VD, val isActive: Status = true)
+case class Vertex[@specialized(Char, Int, Boolean, Byte, Long, Float, Double)VD](
+  val id: Vid, val data: VD, val isActive: Status = true)
 
 /**
  * Class containing both vertices and the edge data associated with an edge
  */
-case class Edge[VD, ED](val source: Vertex[VD], val target: Vertex[VD], val data: ED) {
+case class Edge[VD, @specialized(Char, Int, Boolean, Byte, Long, Float, Double)ED](
+  val source: Vertex[VD], val target: Vertex[VD], val data: ED) {
   def otherVertex(vid: Vid) = { if (source.id == vid) target else source; }
   def vertex(vid: Vid) = { if (source.id == vid) source else target; }
 } // end of class edge
 
 
-case class EdgeRecord[ED](val sourceId: Vid, val targetId: Vid, val data: ED) 
+case class EdgeRecord[@specialized(Char, Int, Boolean, Byte, Long, Float, Double) ED](
+  val sourceId: Vid, val targetId: Vid, val data: ED) 
 
-case class VertexReplica[VD](val id: Vid, val data: VD, 
-  val isActive: Status) 
+case class VertexReplica[@specialized(Char, Int, Boolean, Byte, Long, Float, Double)VD](
+  val id: Vid, val data: VD, val isActive: Status) 
 
-case class VertexRecord[VD](val data: VD, val isActive: Status, 
-  val pids: Array[Pid]) {
+case class VertexRecord[@specialized(Char, Int, Boolean, Byte, Long, Float, Double)VD](
+  val data: VD, val isActive: Status, val pids: Array[Pid]) {
   def replicate(id: Vid) = pids.iterator.map(pid => (pid, VertexReplica(id, data, isActive)))
 }
 
@@ -144,7 +147,7 @@ class Graph[VD: Manifest, ED: Manifest](
           gatherEdges == EdgeDirection.Both)) { // gather on the source
           List((edge.source.id, gather(edge.source.id, edge)))
         } else List.empty)
-      }, merge).reduceByKey(vTablePartitioner, merge)
+      }, merge, default).reduceByKey(vTablePartitioner, merge)
 
       // Apply Phase ===========================================================
       // Merge with the gather result
@@ -170,7 +173,7 @@ class Graph[VD: Manifest, ED: Manifest](
           scatterEdges == EdgeDirection.Both)) { // gather on the source
           List((edge.target.id, scatter(edge.source.id, edge)))
         } else List.empty)
-      }, (_: Boolean) || (_:Boolean)).reduceByKey(vTablePartitioner, _ || _)
+      }, (_: Boolean) || (_:Boolean), false).reduceByKey(vTablePartitioner, _ || _)
 
       // update active vertices
       numActive.value = 0
@@ -256,7 +259,7 @@ class Graph[VD: Manifest, ED: Manifest](
           gatherEdges == EdgeDirection.Both)) { // gather on the source
           List((edge.source.id, gather(edge.source.id, edge)))
         } else List.empty)
-      }, merge).combineByKey((i: A) => i, merge, null, vTablePartitioner, false)
+      }, merge, default).combineByKey((i: A) => i, merge, null, vTablePartitioner, false)
 
       // Apply Phase ===========================================================
       // Merge with the gather result
