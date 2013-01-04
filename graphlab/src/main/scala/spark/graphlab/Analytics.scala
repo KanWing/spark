@@ -207,6 +207,7 @@ object Analytics {
     }
 
     System.setProperty("spark.serializer", "spark.KryoSerializer")
+    // System.setProperty("spark.shuffle.compress", "false") 
     //System.setProperty("spark.kryo.registrator", "mypackage.MyRegistrator")
 
     taskType match {

@@ -256,7 +256,7 @@ class Graph[VD: Manifest, ED: Manifest](
           gatherEdges == EdgeDirection.Both)) { // gather on the source
           List((edge.source.id, gather(edge.source.id, edge)))
         } else List.empty)
-      }, merge).reduceByKey(vTablePartitioner, merge)
+      }, merge).combineByKey((i: A) => i, merge, null, vTablePartitioner, false)
 
       // Apply Phase ===========================================================
       // Merge with the gather result
