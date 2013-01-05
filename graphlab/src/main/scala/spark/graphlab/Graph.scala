@@ -31,11 +31,11 @@ case class Edge[VD, @specialized(Char, Int, Boolean, Byte, Long, Float, Double)E
 
 
 case class EdgeRecord[@specialized(Char, Int, Boolean, Byte, Long, Float, Double) ED](
-  val sourceId: Vid, val targetId: Vid, val data: ED) 
+  val sourceId: Vid, val targetId: Vid, val data: ED)
 
 
 case class EdgeBlockRecord[@specialized(Char, Int, Boolean, Byte, Long, Float, Double) ED](
-  val sourceId: IntArrayList = new IntArrayList, val targetId: IntArrayList = new IntArrayList, 
+  val sourceId: IntArrayList = new IntArrayList, val targetId: IntArrayList = new IntArrayList,
   val data: ArrayBuffer[ED] = new ArrayBuffer[ED]) {
   def add(rec: EdgeRecord[ED]) { add(rec.sourceId, rec.targetId, rec.data) }
   def add(srcId: Vid, dstId: Vid, eData: ED) {
@@ -47,7 +47,7 @@ case class EdgeBlockRecord[@specialized(Char, Int, Boolean, Byte, Long, Float, D
 
 
 case class VertexReplica[@specialized(Char, Int, Boolean, Byte, Long, Float, Double)VD](
-  val id: Vid, val data: VD, val isActive: Status) 
+  val id: Vid, val data: VD, val isActive: Status)
 
 case class VertexRecord[@specialized(Char, Int, Boolean, Byte, Long, Float, Double)VD](
   val data: VD, val isActive: Status, val pids: Array[Pid]) {
@@ -115,13 +115,13 @@ class Graph[VD: Manifest, ED: Manifest](
 
     // Partition the edges over machines.  The part_edges table has the format
     // ((pid, source), (target, data))
-   
+
    var eTable = edges
-      .map { case (source, target, data) => 
+      .map { case (source, target, data) =>
         (math.abs(source) % numProcs, EdgeRecord(source, target, data))
       }
       .partitionBy(new HashPartitioner(numProcs))
-      .mapPartitionsWithSplit({ (pid, iter) =>  
+      .mapPartitionsWithSplit({ (pid, iter) =>
         val edgeBlock = EdgeBlockRecord[ED]()
         iter.foreach{ case (_, record) => edgeBlock.add(record) }
         Iterator((pid, edgeBlock))
@@ -130,9 +130,9 @@ class Graph[VD: Manifest, ED: Manifest](
     // The master vertices are used during the apply phase
     val vTablePartitioner = new HashPartitioner(numProcs)
 
-    val vid2pid : RDD[(Int, Seq[Int])] = eTable.flatMap { 
+    val vid2pid : RDD[(Int, Seq[Int])] = eTable.flatMap {
         case (pid, EdgeBlockRecord(sourceIdArray, targetIdArray, _)) => {
-          val vmap = new it.unimi.dsi.fastutil.ints.IntOpenHashSet(1000000) 
+          val vmap = new it.unimi.dsi.fastutil.ints.IntOpenHashSet(1000000)
           sourceIdArray.foreach(srcId => vmap.add(srcId))
           targetIdArray.foreach(dstId => vmap.add(dstId))
           new Iterator[(Int,Int)] {
@@ -141,7 +141,7 @@ class Graph[VD: Manifest, ED: Manifest](
             def next() = (pid, iter.nextInt())
           }
           // vmap.iterator. map( vid => (vid.intValue,pid) )
-        } 
+        }
       }.groupByKey(vTablePartitioner)
 
     var vTable = vertices.partitionBy(vTablePartitioner).leftOuterJoin(vid2pid).mapValues {
@@ -168,7 +168,7 @@ class Graph[VD: Manifest, ED: Manifest](
       println("Active:          " + numActive)
 
       // Gather Phase =========================================================
-      val gatherTable = new GraphShardRDD(vTable, eTable, 
+      val gatherTable = new GraphShardRDD(vTable, eTable,
         { edge: Edge[VD, ED] =>
         (if (edge.target.isActive && (gatherEdges == EdgeDirection.In ||
           gatherEdges == EdgeDirection.Both)) { // gather on the target
@@ -188,12 +188,12 @@ class Graph[VD: Manifest, ED: Manifest](
             (vid, VertexRecord(apply(new Vertex(vid, data), accum), true, pids))
           case (vid, (VertexRecord(data, true, pids), None)) =>
             (vid, VertexRecord(apply(new Vertex(vid, data), default), true, pids))
-          case (vid, (VertexRecord(data, false, pids), _)) => 
+          case (vid, (VertexRecord(data, false, pids), _)) =>
             (vid, VertexRecord(data, false, pids))
         }, preservesPartitioning = true).cache()
 
       // Scatter Phase =========================================================
-      val scatterTable = new GraphShardRDD(vTable, eTable, 
+      val scatterTable = new GraphShardRDD(vTable, eTable,
         { edge: Edge[VD, ED] =>
         //var accum = List.empty[(Vid, Boolean)]
         (if (edge.target.isActive && (scatterEdges == EdgeDirection.In ||
@@ -213,12 +213,12 @@ class Graph[VD: Manifest, ED: Manifest](
           numActive += (if(isActive) 1 else 0)
           (vid, VertexRecord(vdata, isActive, pids))
         }
-        case (vid, (VertexRecord(vdata, _, pids), None)) => 
+        case (vid, (VertexRecord(vdata, _, pids), None)) =>
           (vid, VertexRecord(vdata, false, pids))
       }, preservesPartitioning = true).cache()
       vTable.foreach(i => ())
       //numActive = vTable.filter(_._2._2).count
-      
+
       iter += 1
     }
     println("=========================================")
@@ -228,7 +228,7 @@ class Graph[VD: Manifest, ED: Manifest](
     // new Graph(vTable.map { case (vid, VertexRecord(vdata, _, _)) => (vid, vdata) },
     //   eTable.map { case (pid, EdgeRecord(source, target, edata)) => (source, target, edata) })
     new Graph(vTable.map { case (vid, VertexRecord(vdata, _, _)) => (vid, vdata) }, edges)
- 
+
   } // End of iterate
 
 
@@ -255,39 +255,26 @@ class Graph[VD: Manifest, ED: Manifest](
     val sc = edges.context
     val numProcs = 10
 
-    println("--------------------------------------------------------------")
-    println("--------------------------------------------------------------")
-    println("--------------------------------------------------------------")
-
-
     // Partition the edges over machines.  The part_edges table has the format
     // ((pid, source), (target, data))
     var eTable = edges
-      .map { case (source, target, data) => 
+      .map { case (source, target, data) =>
         (math.abs(source) % numProcs, EdgeRecord(source, target, data))
       }
       .partitionBy(new HashPartitioner(numProcs))
-      .mapPartitionsWithSplit({ (pid, iter) =>  
+      .mapPartitionsWithSplit({ (pid, iter) =>
         val edgeBlock = EdgeBlockRecord[ED]()
         iter.foreach{ case (_, record) => edgeBlock.add(record) }
         Iterator((pid, edgeBlock))
       }, preservesPartitioning = true).cache()
 
-    eTable.count
- 
-
-    println("--------------------------------------------------------------")
-    println("--------------------------------------------------------------")
-    println("--------------------------------------------------------------")
-  
-
 
     // The master vertices are used during the apply phase
     val vTablePartitioner = new HashPartitioner(numProcs)
 
-    val vid2pid : RDD[(Int, Seq[Int])] = eTable.flatMap { 
+    val vid2pid : RDD[(Int, Seq[Int])] = eTable.flatMap {
         case (pid, EdgeBlockRecord(sourceIdArray, targetIdArray, _)) => {
-          val vmap = new it.unimi.dsi.fastutil.ints.IntOpenHashSet(1000000) 
+          val vmap = new it.unimi.dsi.fastutil.ints.IntOpenHashSet(1000000)
           var i = 0
           while(i < sourceIdArray.length) {
             vmap.add(sourceIdArray(i))
@@ -300,15 +287,11 @@ class Graph[VD: Manifest, ED: Manifest](
           //   def hasNext = iter.hasNext
           //   def next() = (pid, iter.nextInt())
           // }
-          vmap.iterator. map( vid => (vid.intValue,pidLocal) )
-        } 
+          vmap.iterator. map( vid => (vid.intValue, pidLocal) )
+        }
       }.groupByKey(vTablePartitioner)
 
-    vid2pid.count()
-    println("--------------------------------------------------------------")
-    println("--------------------------------------------------------------")
-    println("--------------------------------------------------------------")
-    
+
 
 
     var vTable = vertices.partitionBy(vTablePartitioner).leftOuterJoin(vid2pid).mapValues {
@@ -322,7 +305,7 @@ class Graph[VD: Manifest, ED: Manifest](
     while (iter < numIter)  {
 
       // Gather Phase =========================================================
-      val gatherTable = new GraphShardRDD(vTable, eTable, 
+      val gatherTable = new GraphShardRDD(vTable, eTable,
         { edge: Edge[VD, ED] =>
         (if (edge.target.isActive && (gatherEdges == EdgeDirection.In ||
           gatherEdges == EdgeDirection.Both)) { // gather on the target
@@ -342,7 +325,7 @@ class Graph[VD: Manifest, ED: Manifest](
             (vid, VertexRecord(apply(new Vertex(vid, data), accum), true, pids))
           case (vid, (VertexRecord(data, true, pids), None)) =>
             (vid, VertexRecord(apply(new Vertex(vid, data), default), true, pids))
-          case (vid, (VertexRecord(data, false, pids), _)) => 
+          case (vid, (VertexRecord(data, false, pids), _)) =>
             (vid, VertexRecord(data, false, pids))
         }, preservesPartitioning = true).cache()
 
