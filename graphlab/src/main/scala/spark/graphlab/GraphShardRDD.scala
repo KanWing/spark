@@ -34,7 +34,7 @@ private[spark] class CoGroupAggregator
 
 class GraphShardRDD[VD, ED, U](
     @transient vTable: spark.RDD[(Vid, VertexRecord[VD])], // vid, data, active
-    eTable: spark.RDD[(Pid, EdgeRecord[ED])], // pid, src_vid, dst_vid, data
+    eTable: spark.RDD[(Pid, EdgeBlockRecord[ED])], // pid, src_vid, dst_vid, data
     edgeFun: Edge[VD, ED] => TraversableOnce[(Vid, U)],
     mergeFun: (U, U) => U,
     default: U
@@ -77,7 +77,6 @@ class GraphShardRDD[VD, ED, U](
     val vmap = new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap[VMapRecord[VD, U]](1000000) 
    
 
-    //val vmapAgg = new Array[VD](1000000)
     val fetcher = SparkEnv.get.shuffleFetcher
     fetcher.fetch[Pid, VertexReplica[VD]](shuffleId, split.index).foreach {
       case ( _, vrec ) => 
@@ -87,22 +86,31 @@ class GraphShardRDD[VD, ED, U](
     println("FetchedSplits:  " + ((System.currentTimeMillis - startTime)/1000.0))
     startTime = System.currentTimeMillis
     eTable.iterator(split.eTableSplit, context).foreach { 
-      case(_, EdgeRecord(srcId, dstId, edgeData)) => {
-        val src = vmap.get(srcId)
-        val dst = vmap.get(dstId)
-        val srcVertex = Vertex(srcId, src.data, src.isActive)
-        val dstVertex = Vertex(dstId, dst.data, dst.isActive)
-        val edge = Edge(srcVertex,dstVertex, edgeData)
-        edgeFun(edge).foreach{
-          case (vid, accum) if vid == srcId => {
-            if(src.hasAccum) src.accum = mergeFun(src.accum, accum)
-            else src.accum = accum
+      // get a block of all the edges with the same Pid
+      case(_, EdgeBlockRecord(sourceIdArray, targetIdArray , dataArray)) => {
+        val numEdges = sourceIdArray.length
+        var i = 0
+        while( i < numEdges ) {
+          val srcId = sourceIdArray(i)
+          val dstId = targetIdArray(i)
+          val edgeData = dataArray(i)
+          val src = vmap.get(srcId)
+          val dst = vmap.get(dstId)
+          val srcVertex = Vertex(srcId, src.data, src.isActive)
+          val dstVertex = Vertex(dstId, dst.data, dst.isActive)
+          val edge = Edge(srcVertex,dstVertex, edgeData)
+          edgeFun(edge).foreach{
+            case (vid, accum) if vid == srcId => {
+              if(src.hasAccum) src.accum = mergeFun(src.accum, accum)
+              else src.accum = accum
+            }
+            case (vid, accum) if vid == dstId => {
+              if(dst.hasAccum) dst.accum = mergeFun(dst.accum, accum)
+              else dst.accum = accum
+            }
+            case _ => throw new IllegalArgumentException("Invalid edge operation.")
           }
-          case (vid, accum) if vid == dstId => {
-            if(dst.hasAccum) dst.accum = mergeFun(dst.accum, accum)
-            else dst.accum = accum
-          }
-          case _ => throw new IllegalArgumentException("Invalid edge operation.")
+          i += 1
         }
       }
     }

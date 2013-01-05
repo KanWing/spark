@@ -8,6 +8,12 @@ import spark.KryoRegistrator
 import spark.ClosureCleaner
 import spark.RDD
 
+import it.unimi.dsi.fastutil.ints.IntArrayList
+import scala.collection.mutable.ArrayBuffer
+
+import scala.collection.JavaConversions._
+
+
 /**
  * Class containing the id and value of a vertex
  */
@@ -26,6 +32,19 @@ case class Edge[VD, @specialized(Char, Int, Boolean, Byte, Long, Float, Double)E
 
 case class EdgeRecord[@specialized(Char, Int, Boolean, Byte, Long, Float, Double) ED](
   val sourceId: Vid, val targetId: Vid, val data: ED) 
+
+
+case class EdgeBlockRecord[@specialized(Char, Int, Boolean, Byte, Long, Float, Double) ED](
+  val sourceId: IntArrayList = new IntArrayList, val targetId: IntArrayList = new IntArrayList, 
+  val data: ArrayBuffer[ED] = new ArrayBuffer[ED]) {
+  def add(rec: EdgeRecord[ED]) { add(rec.sourceId, rec.targetId, rec.data) }
+  def add(srcId: Vid, dstId: Vid, eData: ED) {
+    sourceId.add(srcId)
+    targetId.add(dstId)
+    data.add(eData)
+  }
+}
+
 
 case class VertexReplica[@specialized(Char, Int, Boolean, Byte, Long, Float, Double)VD](
   val id: Vid, val data: VD, val isActive: Status) 
@@ -96,24 +115,36 @@ class Graph[VD: Manifest, ED: Manifest](
 
     // Partition the edges over machines.  The part_edges table has the format
     // ((pid, source), (target, data))
-    var eTable =
-      edges.map {
-        case (source, target, data) => {
-          // val pid = abs((source, target).hashCode()) % numProcs
-          val pid = math.abs(source) % numProcs
-          (pid, EdgeRecord(source, target, data) )
-        }
-      }.partitionBy(new HashPartitioner(numProcs), false).cache()
+   
+   var eTable = edges
+      .map { case (source, target, data) => 
+        (math.abs(source) % numProcs, EdgeRecord(source, target, data))
+      }
+      .partitionBy(new HashPartitioner(numProcs))
+      .mapPartitionsWithSplit({ (pid, iter) =>  
+        val edgeBlock = EdgeBlockRecord[ED]()
+        iter.foreach{ case (_, record) => edgeBlock.add(record) }
+        Iterator((pid, edgeBlock))
+      }, preservesPartitioning = true).cache()
 
     // The master vertices are used during the apply phase
     val vTablePartitioner = new HashPartitioner(numProcs)
 
-    var vTable = vertices.partitionBy(vTablePartitioner)
-      .leftOuterJoin(eTable.flatMap { 
-        case (pid, EdgeRecord(source, target, _)) => 
-          List((source,pid), (target,pid)) 
-        }.groupByKey(vTablePartitioner))
-      .mapValues {
+    val vid2pid : RDD[(Int, Seq[Int])] = eTable.flatMap { 
+        case (pid, EdgeBlockRecord(sourceIdArray, targetIdArray, _)) => {
+          val vmap = new it.unimi.dsi.fastutil.ints.IntOpenHashSet(1000000) 
+          sourceIdArray.foreach(srcId => vmap.add(srcId))
+          targetIdArray.foreach(dstId => vmap.add(dstId))
+          new Iterator[(Int,Int)] {
+            val iter = vmap.iterator
+            def hasNext = iter.hasNext
+            def next() = (pid, iter.nextInt())
+          }
+          // vmap.iterator. map( vid => (vid.intValue,pid) )
+        } 
+      }.groupByKey(vTablePartitioner)
+
+    var vTable = vertices.partitionBy(vTablePartitioner).leftOuterJoin(vid2pid).mapValues {
         case (vdata, None) => VertexRecord(vdata, true, Array.empty[Pid])
         case (vdata, Some(pids)) => VertexRecord(vdata, true, pids.toArray)
       }.cache()
@@ -194,9 +225,12 @@ class Graph[VD: Manifest, ED: Manifest](
     println("Finished in " + iter + " iterations.")
 
     // Collapse vreplicas, edges and retuen a new graph
-    new Graph(vTable.map { case (vid, VertexRecord(vdata, _, _)) => (vid, vdata) },
-      eTable.map { case (pid, EdgeRecord(source, target, edata)) => (source, target, edata) })
+    // new Graph(vTable.map { case (vid, VertexRecord(vdata, _, _)) => (vid, vdata) },
+    //   eTable.map { case (pid, EdgeRecord(source, target, edata)) => (source, target, edata) })
+    new Graph(vTable.map { case (vid, VertexRecord(vdata, _, _)) => (vid, vdata) }, edges)
+ 
   } // End of iterate
+
 
 
 
@@ -221,28 +255,67 @@ class Graph[VD: Manifest, ED: Manifest](
     val sc = edges.context
     val numProcs = 10
 
+    println("--------------------------------------------------------------")
+    println("--------------------------------------------------------------")
+    println("--------------------------------------------------------------")
+
+
     // Partition the edges over machines.  The part_edges table has the format
     // ((pid, source), (target, data))
-    var eTable =
-      edges.map {
-        case (source, target, data) => {
-          // val pid = abs((source, target).hashCode()) % numProcs
-          val pid = math.abs(source.hashCode()) % numProcs
-          (pid, EdgeRecord(source, target, data))
-        }
-      }.partitionBy(new HashPartitioner(numProcs), false).cache()
+    var eTable = edges
+      .map { case (source, target, data) => 
+        (math.abs(source) % numProcs, EdgeRecord(source, target, data))
+      }
+      .partitionBy(new HashPartitioner(numProcs))
+      .mapPartitionsWithSplit({ (pid, iter) =>  
+        val edgeBlock = EdgeBlockRecord[ED]()
+        iter.foreach{ case (_, record) => edgeBlock.add(record) }
+        Iterator((pid, edgeBlock))
+      }, preservesPartitioning = true).cache()
+
+    eTable.count
+ 
+
+    println("--------------------------------------------------------------")
+    println("--------------------------------------------------------------")
+    println("--------------------------------------------------------------")
+  
+
 
     // The master vertices are used during the apply phase
     val vTablePartitioner = new HashPartitioner(numProcs)
 
-    var vTable = vertices.partitionBy(vTablePartitioner)
-      .leftOuterJoin(eTable.flatMap { 
-        case (pid, EdgeRecord(source, target, _)) => List((source,pid), (target,pid)) 
-        }.groupByKey(vTablePartitioner))
-      .mapValues {
+    val vid2pid : RDD[(Int, Seq[Int])] = eTable.flatMap { 
+        case (pid, EdgeBlockRecord(sourceIdArray, targetIdArray, _)) => {
+          val vmap = new it.unimi.dsi.fastutil.ints.IntOpenHashSet(1000000) 
+          var i = 0
+          while(i < sourceIdArray.length) {
+            vmap.add(sourceIdArray(i))
+            vmap.add(targetIdArray(i))
+            i += 1
+          }
+          val pidLocal = pid
+          // new Iterator[(Int,Int)] {
+          //   val iter = vmap.iterator
+          //   def hasNext = iter.hasNext
+          //   def next() = (pid, iter.nextInt())
+          // }
+          vmap.iterator. map( vid => (vid.intValue,pidLocal) )
+        } 
+      }.groupByKey(vTablePartitioner)
+
+    vid2pid.count()
+    println("--------------------------------------------------------------")
+    println("--------------------------------------------------------------")
+    println("--------------------------------------------------------------")
+    
+
+
+    var vTable = vertices.partitionBy(vTablePartitioner).leftOuterJoin(vid2pid).mapValues {
         case (vdata, None) => VertexRecord(vdata, true, Array.empty[Pid])
         case (vdata, Some(pids)) => VertexRecord(vdata, true, pids.toArray)
-      }
+      }.cache()
+
 
     // Loop until convergence or there are no active vertices
     var iter = 0
@@ -271,15 +344,17 @@ class Graph[VD: Manifest, ED: Manifest](
             (vid, VertexRecord(apply(new Vertex(vid, data), default), true, pids))
           case (vid, (VertexRecord(data, false, pids), _)) => 
             (vid, VertexRecord(data, false, pids))
-        }, preservesPartitioning = true)
+        }, preservesPartitioning = true).cache()
 
       // end of iteration
       iter += 1
     }
 
     // Collapse vreplicas, edges and retuen a new graph
-    new Graph(vTable.map { case (vid, VertexRecord(vdata, _, _)) => (vid, vdata) },
-      eTable.map { case (pid, EdgeRecord(source, target, edata)) => (source, target, edata) })
+    // new Graph(vTable.map { case (vid, VertexRecord(vdata, _, _)) => (vid, vdata) },
+    //   eTable.map { case (pid, EdgeRecord(source, target, edata)) => (source, target, edata) })
+    new Graph(vTable.map { case (vid, VertexRecord(vdata, _, _)) => (vid, vdata) }, edges)
+
   } // End of iterate
 
 
