@@ -13,6 +13,9 @@ import scala.collection.mutable.ArrayBuffer
 
 import scala.collection.JavaConversions._
 
+import com.esotericsoftware.kryo._
+
+
 
 /**
  * Class containing the id and value of a vertex
@@ -88,6 +91,8 @@ class Graph[VD: Manifest, ED: Manifest](
   def cache(): Graph[VD, ED] = {
     new Graph(vertices.cache(), edges.cache())
   }
+
+
 
   /**
    * Execute the synchronous powergraph abstraction.
@@ -350,6 +355,17 @@ class Graph[VD: Manifest, ED: Manifest](
  * Graph companion object
  */
 object Graph {
+
+
+
+  def kryoRegister[VD,ED](kryo: Kryo) {
+    kryo.register(classOf[(Vid,Vid,ED)])
+    kryo.register(classOf[(Vid,ED)])
+    kryo.register(classOf[VertexRecord[VD]])
+    kryo.register(classOf[VertexReplica[VD]])
+    kryo.register(classOf[EdgeRecord[ED]])
+    kryo.register(classOf[EdgeBlockRecord[ED]])
+  }
 
   /**
    * Load an edge list from file initializing the Graph RDD

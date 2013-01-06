@@ -2,6 +2,17 @@ package spark.graphlab
 
 import spark._
 import spark.SparkContext._
+import com.esotericsoftware.kryo._
+
+
+class AnalyticsKryoRegistrator extends KryoRegistrator {
+  def registerClasses(kryo: Kryo) {
+    Graph.kryoRegister[(Int,Float,Float), Float](kryo)
+    Graph.kryoRegister[(Int,Float), Float](kryo)
+    Graph.kryoRegister[Float, Float](kryo)
+  }
+}
+
 
 object Analytics {
 
@@ -19,7 +30,7 @@ object Analytics {
     //   vertex data: (Degree, Rank, OldRank)
     //   edge data: None
     val vertices = outDegree.mapValues(deg => (deg, 1.0F, 1.0F))
-    val edges = graph.edges //.map(v => None)
+    val edges = graph.edges
     val pageRankGraph = new Graph(vertices, edges)
     // Run PageRank
     pageRankGraph.iterateDynamic(
@@ -121,7 +132,7 @@ object Analytics {
     val edges = graph.edges // .mapValues(v => None)
     val ccGraph = new Graph(vertices, edges)
 
-    
+
     ccGraph.iterateStatic(
       (me_id, edge) => edge.otherVertex(me_id).data, // gather
       (a: Int, b: Int) => math.min(a, b), // merge
@@ -142,11 +153,11 @@ object Analytics {
    * lowest vertex id in the connected component containing
    * that vertex.
    */
-  def dynamicShortestPath[VD: Manifest, ED: Manifest](graph: Graph[VD, Float], 
+  def dynamicShortestPath[VD: Manifest, ED: Manifest](graph: Graph[VD, Float],
     sources: List[Int], numIter: Int) = {
     val sourceSet = sources.toSet
     val vertices = graph.vertices.mapPartitions(
-      iter => iter.map { 
+      iter => iter.map {
         case (vid, _) => (vid, (if(sourceSet.contains(vid)) 0.0F else Float.MaxValue) )
         });
 
@@ -172,11 +183,11 @@ object Analytics {
    * lowest vertex id in the connected component containing
    * that vertex.
    */
-  def shortestPath[VD: Manifest, ED: Manifest](graph: Graph[VD, Float], 
+  def shortestPath[VD: Manifest, ED: Manifest](graph: Graph[VD, Float],
     sources: List[Int], numIter: Int) = {
     val sourceSet = sources.toSet
     val vertices = graph.vertices.mapPartitions(
-      iter => iter.map { 
+      iter => iter.map {
         case (vid, _) => (vid, (if(sourceSet.contains(vid)) 0.0F else Float.MaxValue) )
         });
 
@@ -199,16 +210,16 @@ object Analytics {
     val host = args(0)
     val taskType = args(1)
     val fname = args(2)
-    val options =  args.drop(3).map { arg => 
+    val options =  args.drop(3).map { arg =>
       arg.dropWhile(_ == '-').split('=') match {
         case Array(opt, v) => (opt -> v)
-        case _ => throw new IllegalArgumentException("Invalid argument: " + arg) 
+        case _ => throw new IllegalArgumentException("Invalid argument: " + arg)
       }
     }
 
     System.setProperty("spark.serializer", "spark.KryoSerializer")
-    // System.setProperty("spark.shuffle.compress", "false") 
-    //System.setProperty("spark.kryo.registrator", "mypackage.MyRegistrator")
+    // System.setProperty("spark.shuffle.compress", "false")
+    System.setProperty("spark.kryo.registrator", "spark.graphlab.AnalyticsKryoRegistrator")
 
     taskType match {
       case "pagerank" => {
@@ -216,12 +227,12 @@ object Analytics {
         var numIter = Int.MaxValue
         var isDynamic = true
 
-        options.foreach{ 
+        options.foreach{
           case ("numIter", v) => numIter = v.toInt
           case ("dynamic", v) => isDynamic = v.toBoolean
           case (opt, _) => throw new IllegalArgumentException("Invalid option: " + opt)
         }
-      
+
         if(!isDynamic && numIter == Int.MaxValue) {
           println("Set number of iterations!")
           exit(1)
@@ -235,11 +246,11 @@ object Analytics {
         println("======================================")
 
         val sc = new SparkContext(host, "PageRank(" + fname + ")")
-        val graph = Graph.textFile(sc, fname, a => 1)
+        val graph = Graph.textFile(sc, fname, a => 1.0F)
         val startTime = System.currentTimeMillis
         val pr = if(isDynamic) Analytics.dynamicPageRank(graph, numIter)
           else  Analytics.pageRank(graph, numIter)
-        println("Total rank: " + pr.map(_._2).reduce(_+_))           
+        println("Total rank: " + pr.map(_._2).reduce(_+_))
         println("Runtime:    " + ((System.currentTimeMillis - startTime)/1000.0) + " seconds")
         sc.stop()
       }
@@ -249,12 +260,12 @@ object Analytics {
         var numIter = Int.MaxValue
         var isDynamic = true
 
-        options.foreach{ 
+        options.foreach{
           case ("numIter", v) => numIter = v.toInt
           case ("dynamic", v) => isDynamic = v.toBoolean
           case (opt, _) => throw new IllegalArgumentException("Invalid option: " + opt)
         }
-      
+
         if(!isDynamic && numIter == Int.MaxValue) {
           println("Set number of iterations!")
           exit(1)
@@ -268,7 +279,7 @@ object Analytics {
         println("======================================")
 
         val sc = new SparkContext(host, "ConnectedComponents(" + fname + ")")
-        val graph = Graph.textFile(sc, fname, a => 1)
+        val graph = Graph.textFile(sc, fname, a => 1.0F)
         val cc = if(isDynamic) Analytics.dynamicConnectedComponents(graph, numIter)
           else  Analytics.connectedComponents(graph, numIter)
         println("Components: " + cc.map(_._2).distinct())
@@ -283,13 +294,13 @@ object Analytics {
         var isDynamic = true
         var sources: List[Int] = List.empty
 
-        options.foreach{ 
+        options.foreach{
           case ("numIter", v) => numIter = v.toInt
           case ("dynamic", v) => isDynamic = v.toBoolean
           case ("source", v) => sources ++= List(v.toInt)
           case (opt, _) => throw new IllegalArgumentException("Invalid option: " + opt)
         }
-      
+
 
         if(!isDynamic && numIter == Int.MaxValue) {
           println("Set number of iterations!")
