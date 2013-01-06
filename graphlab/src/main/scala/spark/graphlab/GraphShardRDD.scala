@@ -22,7 +22,12 @@ case class GraphShardSplit(idx: Int, eTableSplit: Split) extends Split {
 case class VMapRecord[
   @specialized(Char, Int, Boolean, Byte, Long, Float, Double)VD,
   @specialized(Char, Int, Boolean, Byte, Long, Float, Double)U](
-  val data: VD, val isActive: Status, var accum: U, var hasAccum: Boolean = false) 
+  val data: VD, val isActive: Status, var accum: U, var hasAccum: Boolean = false) {
+  def add(other: U, mergeFun: (U,U) => U ) {
+    if(hasAccum) accum = mergeFun(accum, other)
+    else { accum = other; hasAccum = true }
+  }
+}
 
 private[spark] class CoGroupAggregator
   extends Aggregator[Any, Any, ArrayBuffer[Any]](
@@ -66,26 +71,21 @@ class GraphShardRDD[VD, ED, U](
 
   override def compute(s: Split, context: TaskContext): Iterator[(Vid, U)] = {
 
-    println("================================================================")
-    println("GraphShardRDD.compute")
-    println("================================================================")
+    val split = s.asInstanceOf[GraphShardSplit]
+    // Create the vmap.
+    val vmap = new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap[VMapRecord[VD, U]](1000000)
 
     var startTime = System.currentTimeMillis
 
-    val split = s.asInstanceOf[GraphShardSplit]
-    // Create the vmap.
-    val vmap = new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap[VMapRecord[VD, U]](1000000) 
-   
-
     val fetcher = SparkEnv.get.shuffleFetcher
     fetcher.fetch[Pid, VertexReplica[VD]](shuffleId, split.index).foreach {
-      case ( _, vrec ) => 
+      case ( _, vrec ) =>
       vmap.put(vrec.id, new VMapRecord[VD,U](vrec.data, vrec.isActive, default) )
     }
 
-    println("FetchedSplits:  " + ((System.currentTimeMillis - startTime)/1000.0))
+    // println("FetchedSplits:  " + ((System.currentTimeMillis - startTime)/1000.0))
     startTime = System.currentTimeMillis
-    eTable.iterator(split.eTableSplit, context).foreach { 
+    eTable.iterator(split.eTableSplit, context).foreach {
       // get a block of all the edges with the same Pid
       case(_, EdgeBlockRecord(sourceIdArray, targetIdArray , dataArray)) => {
         val numEdges = sourceIdArray.length
@@ -100,21 +100,16 @@ class GraphShardRDD[VD, ED, U](
           val dstVertex = Vertex(dstId, dst.data, dst.isActive)
           val edge = Edge(srcVertex,dstVertex, edgeData)
           edgeFun(edge).foreach{
-            case (vid, accum) if vid == srcId => {
-              if(src.hasAccum) src.accum = mergeFun(src.accum, accum)
-              else src.accum = accum
-            }
-            case (vid, accum) if vid == dstId => {
-              if(dst.hasAccum) dst.accum = mergeFun(dst.accum, accum)
-              else dst.accum = accum
-            }
-            case _ => throw new IllegalArgumentException("Invalid edge operation.")
+            case (vid, accum) =>
+              if(vid == srcId) src.add(accum, mergeFun)
+              else if(vid == dstId) dst.add(accum, mergeFun)
+              else throw new IllegalArgumentException("Invalid edge operation.")
           }
           i += 1
         }
       }
     }
-    println("ComputeTime:    " + ((System.currentTimeMillis - startTime)/1000.0))
+    // println("ComputeTime:    " + ((System.currentTimeMillis - startTime)/1000.0))
     vmap.iterator.filter( _._2.hasAccum ).map{ case (vid, rec) => (vid, rec.accum) }
   }
 }

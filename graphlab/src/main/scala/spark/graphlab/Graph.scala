@@ -135,30 +135,34 @@ class Graph[VD: Manifest, ED: Manifest](
     // The master vertices are used during the apply phase
     val vTablePartitioner = new HashPartitioner(numProcs)
 
+
     val vid2pid : RDD[(Int, Seq[Int])] = eTable.flatMap {
         case (pid, EdgeBlockRecord(sourceIdArray, targetIdArray, _)) => {
           val vmap = new it.unimi.dsi.fastutil.ints.IntOpenHashSet(1000000)
-          sourceIdArray.foreach(srcId => vmap.add(srcId))
-          targetIdArray.foreach(dstId => vmap.add(dstId))
-          new Iterator[(Int,Int)] {
-            val iter = vmap.iterator
-            def hasNext = iter.hasNext
-            def next() = (pid, iter.nextInt())
+          var i = 0
+          while(i < sourceIdArray.length) {
+            vmap.add(sourceIdArray(i))
+            vmap.add(targetIdArray(i))
+            i += 1
           }
-          // vmap.iterator. map( vid => (vid.intValue,pid) )
+          val pidLocal = pid
+          // new Iterator[(Int,Int)] {
+          //   val iter = vmap.iterator
+          //   def hasNext = iter.hasNext
+          //   def next() = (pid, iter.nextInt())
+          // }
+          vmap.iterator. map( vid => (vid.intValue, pidLocal) )
         }
       }.groupByKey(vTablePartitioner)
+
+
+
 
     var vTable = vertices.partitionBy(vTablePartitioner).leftOuterJoin(vid2pid).mapValues {
         case (vdata, None) => VertexRecord(vdata, true, Array.empty[Pid])
         case (vdata, Some(pids)) => VertexRecord(vdata, true, pids.toArray)
       }.cache()
 
-
-    // // TODO: rewrite this with accumulator.
-    // val replicationFactor = vid2pid.count().toDouble / vTable.count().toDouble
-    // println("Replication Factor: " + replicationFactor)
-    // println("Edge table size: " + eTable.count.toInt)
 
     // Loop until convergence or there are no active vertices
     var iter = 0
@@ -183,7 +187,10 @@ class Graph[VD: Manifest, ED: Manifest](
           gatherEdges == EdgeDirection.Both)) { // gather on the source
           List((edge.source.id, gather(edge.source.id, edge)))
         } else List.empty)
-      }, merge, default).reduceByKey(vTablePartitioner, merge)
+      }, merge, default)
+      .combineByKey((i: A) => i, merge, null, vTablePartitioner, false)
+
+      println("Gather table size: " + gatherTable.count)
 
       // Apply Phase ===========================================================
       // Merge with the gather result
@@ -209,7 +216,11 @@ class Graph[VD: Manifest, ED: Manifest](
           scatterEdges == EdgeDirection.Both)) { // gather on the source
           List((edge.target.id, scatter(edge.source.id, edge)))
         } else List.empty)
-      }, (_: Boolean) || (_:Boolean), false).reduceByKey(vTablePartitioner, _ || _)
+      }, (_: Boolean) || (_:Boolean), false)
+      .combineByKey((i: Boolean) => i, (_: Boolean) || (_:Boolean),
+        null, vTablePartitioner, false)
+
+      println("Scatter table size: " + scatterTable.count)
 
       // update active vertices
       numActive.value = 0
@@ -221,8 +232,12 @@ class Graph[VD: Manifest, ED: Manifest](
         case (vid, (VertexRecord(vdata, _, pids), None)) =>
           (vid, VertexRecord(vdata, false, pids))
       }, preservesPartitioning = true).cache()
+
+      // Force the vtable to be computed and determine the number of active vertices
       vTable.foreach(i => ())
-      //numActive = vTable.filter(_._2._2).count
+      println("Active vtable: " + vTable.filter(_._2.isActive).count)
+
+      println("Number of active vertices: " + numActive.value)
 
       iter += 1
     }

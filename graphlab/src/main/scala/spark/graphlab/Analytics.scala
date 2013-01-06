@@ -9,6 +9,7 @@ class AnalyticsKryoRegistrator extends KryoRegistrator {
   def registerClasses(kryo: Kryo) {
     Graph.kryoRegister[(Int,Float,Float), Float](kryo)
     Graph.kryoRegister[(Int,Float), Float](kryo)
+    Graph.kryoRegister[Int, Float](kryo)
     Graph.kryoRegister[Float, Float](kryo)
   }
 }
@@ -19,7 +20,7 @@ object Analytics {
   /**
    * Compute the PageRank of a graph returning the pagerank of each vertex as an RDD
    */
-  def dynamicPageRank[VD: Manifest, ED: Manifest](graph: Graph[VD, ED], maxIter: Int = 10) = {
+  def dynamicPageRank[VD: Manifest, ED: Manifest](graph: Graph[VD, ED], tol: Float, maxIter: Int = 10) = {
     graph.edges.cache()
     // Compute the out degree of each vertex
     val outDegree = graph.edges.flatMap {
@@ -49,7 +50,8 @@ object Analytics {
       (me_id, edge) => {
         // val Edge(Vertex(_, (_, new_rank, old_rank)), _, edata) = edge
         // math.abs(new_rank - old_rank) > 0.01
-        math.abs(edge.source.data._2 - edge.source.data._1) > 0.01
+        val residual = math.abs(edge.source.data._2 - edge.source.data._1)
+        residual > tol
       }, // scatter
       maxIter).vertices.mapValues { case (degree, rank, oldRank) => rank }
     //    println("Computed graph: #edges: " + graph_ret.numEdges + "  #vertices" + graph_ret.numVertices)
@@ -226,10 +228,12 @@ object Analytics {
 
         var numIter = Int.MaxValue
         var isDynamic = true
+        var tol:Float = 0.001F
 
         options.foreach{
           case ("numIter", v) => numIter = v.toInt
           case ("dynamic", v) => isDynamic = v.toBoolean
+          case ("tol", v) => tol = v.toFloat
           case (opt, _) => throw new IllegalArgumentException("Invalid option: " + opt)
         }
 
@@ -242,13 +246,14 @@ object Analytics {
         println("--------------------------------------")
         println(" Using parameters:")
         println(" \tDynamic:  " + isDynamic)
+        if(isDynamic) println(" \t  |-> Tolerance: " + tol)
         println(" \tNumIter:  " + numIter)
         println("======================================")
 
         val sc = new SparkContext(host, "PageRank(" + fname + ")")
         val graph = Graph.textFile(sc, fname, a => 1.0F)
         val startTime = System.currentTimeMillis
-        val pr = if(isDynamic) Analytics.dynamicPageRank(graph, numIter)
+        val pr = if(isDynamic) Analytics.dynamicPageRank(graph, tol, numIter)
           else  Analytics.pageRank(graph, numIter)
         println("Total rank: " + pr.map(_._2).reduce(_+_))
         println("Runtime:    " + ((System.currentTimeMillis - startTime)/1000.0) + " seconds")
