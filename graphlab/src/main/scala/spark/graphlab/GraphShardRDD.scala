@@ -81,12 +81,14 @@ class GraphShardRDD[VD, ED, U](
       case ( _, vrec ) =>
         vmap.put(vrec.id, new VMapRecord[VD,U](vrec.data, vrec.isActive, default) )
     }
-/*
+
+
     // println("FetchedSplits:  " + ((System.currentTimeMillis - startTime)/1000.0))
-    startTime = System.currentTimeMillis
+    //    startTime = System.currentTimeMillis
+
     eTable.iterator(split.eTableSplit, context).foreach {
       // get a block of all the edges with the same Pid
-      case(_, EdgeBlockRecord(sourceIdArray, targetIdArray , dataArray)) => {
+      case(pid, EdgeBlockRecord(sourceIdArray, targetIdArray , dataArray)) => {
         val numEdges = sourceIdArray.length
         var i = 0
         var edge: Edge[VD,ED] = null
@@ -97,10 +99,14 @@ class GraphShardRDD[VD, ED, U](
           val edgeData = dataArray(i)
           val srcVmap = vmap.get(srcId)
           val dstVmap = vmap.get(dstId)
+
+          assert(srcVmap != null)
+          assert(dstVmap != null)
+
           if(edge == null) {
             val srcVertex = Vertex(srcId, srcVmap.data, srcVmap.isActive)
             val dstVertex = Vertex(dstId, dstVmap.data, dstVmap.isActive)
-            edge = Edge(srcVertex,dstVertex, edgeData)
+            edge = Edge(srcVertex, dstVertex, edgeData)
           } else {
             edge.source.id = srcId;
             edge.source.data = srcVmap.data
@@ -115,7 +121,7 @@ class GraphShardRDD[VD, ED, U](
         }
       }
     }
-    */
+
 
     // println("ComputeTime:    " + ((System.currentTimeMillis - startTime)/1000.0))
     vmap.iterator.filter( _._2.hasAccum ).map{ case (vid, rec) => (vid, rec.accum) }

@@ -240,8 +240,6 @@ class Graph[VD: Manifest, ED: Manifest](
 
       // Force the vtable to be computed and determine the number of active vertices
       vTable.foreach(i => ())
-      println("Active vtable: " + vTable.filter(_._2.isActive).count)
-
       println("Number of active vertices: " + numActive.value)
 
       iter += 1
@@ -281,7 +279,7 @@ class Graph[VD: Manifest, ED: Manifest](
 
     val sc = edges.context
 
-    // val timer = new Timer
+    val timer = new Timer
 
     // Partition the edges over machines.  The part_edges table has the format
     // ((pid, source), (target, data))
@@ -296,8 +294,8 @@ class Graph[VD: Manifest, ED: Manifest](
         Iterator((pid, edgeBlock))
       }, preservesPartitioning = true).cache()
 
-    // println("EdgeTable count: " + eTable.count)
-    // println("Time: " + timer.tic)
+    println("EdgeTable count: " + eTable.count)
+    println("Time: " + timer.tic)
 
     // The master vertices are used during the apply phase
     val vTablePartitioner = new HashPartitioner(numProcsLocal)
@@ -305,34 +303,28 @@ class Graph[VD: Manifest, ED: Manifest](
 
     val vid2pid : RDD[(Int, Seq[Int])] = eTable.flatMap {
         case (pid, EdgeBlockRecord(sourceIdArray, targetIdArray, _)) => {
-          val vmap = new it.unimi.dsi.fastutil.ints.IntOpenHashSet
+          val vSet = new it.unimi.dsi.fastutil.ints.IntOpenHashSet
           var i = 0
           while(i < sourceIdArray.length) {
-            vmap.add(sourceIdArray(i))
-            vmap.add(targetIdArray(i))
+            vSet.add(sourceIdArray(i))
+            vSet.add(targetIdArray(i))
             i += 1
           }
           val pidLocal = pid
-          // new Iterator[(Int,Int)] {
-          //   val iter = vmap.iterator
-          //   def hasNext = iter.hasNext
-          //   def next() = (pid, iter.nextInt())
-          // }
-          vmap.iterator. map( vid => (vid.intValue, pidLocal) )
+          vSet.iterator.map( vid => (vid.intValue, pidLocal) )
         }
       }.groupByKey(vTablePartitioner).cache()
 
-
-    // println("Vid2Pid Count: " + vid2pid.count)
-    // println("Time: " + timer.tic)
+    println("Vid2Pid Count: " + vid2pid.count)
+    println("Time: " + timer.tic)
 
     var vTable = vertices.partitionBy(vTablePartitioner).leftOuterJoin(vid2pid).mapValues {
         case (vdata, None) => VertexRecord(vdata, true, Array.empty[Pid])
         case (vdata, Some(pids)) => VertexRecord(vdata, true, pids.toArray)
       }.cache()
 
-    // println("VTable Count: " + vTable.count)
-    // println("Time: " + timer.tic)
+    println("VTable Count: " + vTable.count)
+    println("Time: " + timer.tic)
 
     // Loop until convergence or there are no active vertices
     var iter = 0
@@ -369,11 +361,17 @@ class Graph[VD: Manifest, ED: Manifest](
             (vid, VertexRecord(data, false, pids))
         }, preservesPartitioning = true).cache()
 
+      // vTable.take(10).foreach(println(_))
+
       // println("VTable Count: " + vTable.count)
       // println("Time: " + timer.tic)
       // end of iteration
       iter += 1
     }
+
+    vTable.foreach(i => ())
+    println("Finished " + numIter + " iterations in " + timer.tic + " seconds.")
+
 
     // Collapse vreplicas, edges and retuen a new graph
     // new Graph(vTable.map { case (vid, VertexRecord(vdata, _, _)) => (vid, vdata) },
@@ -413,7 +411,10 @@ object Graph {
     // Parse the edge data table
     val edges = sc.textFile(fname).map(
       line => {
-        val source :: target :: tail = line.split("\t").toList
+        val lineArray = line.split("\t")
+        val source = lineArray(0)
+        val target = lineArray(1)
+        val tail = lineArray.drop(2).mkString("\t")
         val edata = edgeParser(tail.mkString("\t"))
         (source.trim.toInt, target.trim.toInt, edata)
       }).cache()
@@ -490,6 +491,20 @@ object Graph {
     }.distinct.map(vid => (vid, (vid / numCycles) * numCycles))
     new Graph(sc.parallelize(vertices), sc.parallelize(edges))
   }
+
+  /**
+   * Make a regular grid graph
+   **/
+  def grid(sc: SparkContext, numRows: Int = 5, numCols: Int = 5) = {
+    def coord(vid: Int) = (vid % numRows, vid / numRows)
+    val vertices = sc.parallelize( 0 until (numRows * numCols) ).map(vid => (vid, coord(vid)))
+    def index(r: Int, c:Int) = (r + c * numRows)
+    val edges = vertices.flatMap{ case (vid, (r,c)) =>
+      (if(r+1 < numRows) List((vid, index(r+1,c), 1.0F)) else List.empty) ++
+        (if(c+1 < numCols) List((vid, index(r,c+1), 1.0F)) else List.empty)
+    }
+    new Graph(vertices, edges)
+ }
 
 } // End of Graph Object
 

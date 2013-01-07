@@ -22,16 +22,14 @@ object Analytics {
    * Compute the PageRank of a graph returning the pagerank of each vertex as an RDD
    */
   def dynamicPageRank[VD: Manifest, ED: Manifest](graph: Graph[VD, ED], tol: Float, maxIter: Int = 10) = {
-    graph.edges.cache()
+    graph.edges.cache
     // Compute the out degree of each vertex
-    val outDegree = graph.edges.flatMap {
-      case (src, target, data) => Array((src, 1), (target, 0))
-    }.reduceByKey(_ + _)
+    val outDegree = graph.edges.map { case (src, target, data) => (src, 1)}.reduceByKey(_ + _)
+    val vertices = graph.vertices.leftOuterJoin(outDegree).mapValues {
+      case (_, Some(deg)) => (deg, 1.0F, 1.0F)
+      case (_, None) => (0, 1.0F, 1.0F)
+    }.cache
 
-    // Construct the pagerank graph with
-    //   vertex data: (Degree, Rank, OldRank)
-    //   edge data: None
-    val vertices = outDegree.mapValues(deg => (deg, 1.0F, 1.0F))
     val edges = graph.edges
     val pageRankGraph = new Graph(vertices, edges)
     // Run PageRank
@@ -52,16 +50,13 @@ object Analytics {
    * Compute the PageRank of a graph returning the pagerank of each vertex as an RDD
    */
   def pageRank[VD: Manifest, ED: Manifest](graph: Graph[VD, ED], maxIter: Int) = {
-    graph.edges.cache()
+    graph.edges.cache
     // Compute the out degree of each vertex
-    val outDegree = graph.edges.flatMap {
-      case (src, target, data) => Array((src, 1), (target, 0))
-    }.reduceByKey(_ + _)
-
-    // Construct the pagerank graph with
-    //   vertex data: (Degree, Rank, OldRank)
-    //   edge data: None
-    val vertices = outDegree.mapValues(deg => (deg, 1.0F))
+    val outDegree = graph.edges.map { case (src, target, data) => (src, 1)}.reduceByKey(_ + _)
+    val vertices = graph.vertices.leftOuterJoin(outDegree).mapValues {
+      case (_, Some(deg)) => (deg, 1.0F)
+      case (_, None) => (0, 1.0F)
+    }.cache
     val edges = graph.edges //.map(v => None)
     val pageRankGraph = new Graph(vertices, edges)
     // Run PageRank
@@ -211,11 +206,13 @@ object Analytics {
         var numIter = Int.MaxValue
         var isDynamic = true
         var tol:Float = 0.001F
+        var outFname = ""
 
         options.foreach{
           case ("numIter", v) => numIter = v.toInt
           case ("dynamic", v) => isDynamic = v.toBoolean
           case ("tol", v) => tol = v.toFloat
+          case ("output", v) => outFname = v
           case (opt, _) => throw new IllegalArgumentException("Invalid option: " + opt)
         }
 
@@ -238,6 +235,10 @@ object Analytics {
         val pr = if(isDynamic) Analytics.dynamicPageRank(graph, tol, numIter)
           else  Analytics.pageRank(graph, numIter)
         println("Total rank: " + pr.map(_._2).reduce(_+_))
+        if(!outFname.isEmpty) {
+          println("Saving pageranks of pages to " + outFname)
+          pr.map(p => p._1 + "\t" + p._2).saveAsTextFile(outFname)
+        }
         println("Runtime:    " + ((System.currentTimeMillis - startTime)/1000.0) + " seconds")
         sc.stop()
       }
