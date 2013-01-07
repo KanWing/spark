@@ -7,6 +7,7 @@ import com.esotericsoftware.kryo._
 
 class AnalyticsKryoRegistrator extends KryoRegistrator {
   def registerClasses(kryo: Kryo) {
+    kryo.register(classOf[(Int,Float,Float)])
     Graph.kryoRegister[(Int,Float,Float), Float](kryo)
     Graph.kryoRegister[(Int,Float), Float](kryo)
     Graph.kryoRegister[Int, Float](kryo)
@@ -35,24 +36,11 @@ object Analytics {
     val pageRankGraph = new Graph(vertices, edges)
     // Run PageRank
     pageRankGraph.iterateDynamic(
-      (me_id, edge) => {
-        // val Edge(Vertex(_, (degree, rank, _)), _, edata) = edge
-        // rank / degree
-        edge.source.data._2 / edge.source.data._1
-      }, // gather
+      (me_id, edge) => edge.source.data._2 / edge.source.data._1, // gather
       (a: Float, b: Float) => a + b, // merge
       0F,
-      (vertex, a: Float) => {
-        // val Vertex(vid, (out_degree, rank, old_rank)) = vertex
-        // (out_degree, (0.15F + 0.85F * a), rank)
-        (vertex.data._1, (0.15F + 0.85F * a), vertex.data._2)
-      }, // apply
-      (me_id, edge) => {
-        // val Edge(Vertex(_, (_, new_rank, old_rank)), _, edata) = edge
-        // math.abs(new_rank - old_rank) > 0.01
-        val residual = math.abs(edge.source.data._2 - edge.source.data._1)
-        residual > tol
-      }, // scatter
+      (vertex, a: Float) => (vertex.data._1, (0.15F + 0.85F * a), vertex.data._2), // apply
+      (me_id, edge) => math.abs(edge.source.data._2 - edge.source.data._1) > tol, // scatter
       maxIter).vertices.mapValues { case (degree, rank, oldRank) => rank }
     //    println("Computed graph: #edges: " + graph_ret.numEdges + "  #vertices" + graph_ret.numVertices)
     //    graph_ret.vertices.take(10).foreach(println)
@@ -78,16 +66,10 @@ object Analytics {
     val pageRankGraph = new Graph(vertices, edges)
     // Run PageRank
     pageRankGraph.iterateStatic(
-      (me_id, edge) => { // rank / degree
-        edge.source.data._2 / edge.source.data._1
-      }, // gather
+      (me_id, edge) => edge.source.data._2 / edge.source.data._1, // gather
       (a: Float, b: Float) => a + b, // merge
       0F,
-      (vertex, a: Float) => {
-        // val Vertex(vid, (out_degree, rank, old_rank)) = vertex
-        // (out_degree, (0.15F + 0.85F * a), rank)
-        (vertex.data._1, (0.15F + 0.85F * a))
-      }, // apply
+      (vertex, a: Float) => (vertex.data._1, (0.15F + 0.85F * a)), // apply
       maxIter).vertices.mapValues { case (degree, rank) => rank }
     //    println("Computed graph: #edges: " + graph_ret.numEdges + "  #vertices" + graph_ret.numVertices)
     //    graph_ret.vertices.take(10).foreach(println)
@@ -220,7 +202,7 @@ object Analytics {
     }
 
     System.setProperty("spark.serializer", "spark.KryoSerializer")
-    // System.setProperty("spark.shuffle.compress", "false")
+    //System.setProperty("spark.shuffle.compress", "false")
     System.setProperty("spark.kryo.registrator", "spark.graphlab.AnalyticsKryoRegistrator")
 
     taskType match {

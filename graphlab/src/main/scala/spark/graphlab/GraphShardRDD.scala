@@ -38,10 +38,9 @@ private[spark] class CoGroupAggregator
 
 
 class GraphShardRDD[VD, ED, U](
-    @transient vTable: spark.RDD[(Vid, VertexRecord[VD])], // vid, data, active
-    eTable: spark.RDD[(Pid, EdgeBlockRecord[ED])], // pid, src_vid, dst_vid, data
-    edgeFun: Edge[VD, ED] => TraversableOnce[(Vid, U)],
-    mergeFun: (U, U) => U,
+    @transient vTable: spark.RDD[(Vid, VertexRecord[VD])],
+    eTable: spark.RDD[(Pid, EdgeBlockRecord[ED])],
+    edgeFun: ((Edge[VD, ED], VMapRecord[VD,U], VMapRecord[VD,U]) => Unit),
     default: U
     ) extends RDD[(Vid, U)](eTable.context) with Logging {
 
@@ -72,17 +71,17 @@ class GraphShardRDD[VD, ED, U](
   override def compute(s: Split, context: TaskContext): Iterator[(Vid, U)] = {
 
     val split = s.asInstanceOf[GraphShardSplit]
-    // Create the vmap.
     val vmap = new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap[VMapRecord[VD, U]](1000000)
 
-    var startTime = System.currentTimeMillis
+
+    // var startTime = System.currentTimeMillis
 
     val fetcher = SparkEnv.get.shuffleFetcher
     fetcher.fetch[Pid, VertexReplica[VD]](shuffleId, split.index).foreach {
       case ( _, vrec ) =>
-      vmap.put(vrec.id, new VMapRecord[VD,U](vrec.data, vrec.isActive, default) )
+        vmap.put(vrec.id, new VMapRecord[VD,U](vrec.data, vrec.isActive, default) )
     }
-
+/*
     // println("FetchedSplits:  " + ((System.currentTimeMillis - startTime)/1000.0))
     startTime = System.currentTimeMillis
     eTable.iterator(split.eTableSplit, context).foreach {
@@ -90,25 +89,34 @@ class GraphShardRDD[VD, ED, U](
       case(_, EdgeBlockRecord(sourceIdArray, targetIdArray , dataArray)) => {
         val numEdges = sourceIdArray.length
         var i = 0
+        var edge: Edge[VD,ED] = null
+
         while( i < numEdges ) {
           val srcId = sourceIdArray(i)
           val dstId = targetIdArray(i)
           val edgeData = dataArray(i)
-          val src = vmap.get(srcId)
-          val dst = vmap.get(dstId)
-          val srcVertex = Vertex(srcId, src.data, src.isActive)
-          val dstVertex = Vertex(dstId, dst.data, dst.isActive)
-          val edge = Edge(srcVertex,dstVertex, edgeData)
-          edgeFun(edge).foreach{
-            case (vid, accum) =>
-              if(vid == srcId) src.add(accum, mergeFun)
-              else if(vid == dstId) dst.add(accum, mergeFun)
-              else throw new IllegalArgumentException("Invalid edge operation.")
+          val srcVmap = vmap.get(srcId)
+          val dstVmap = vmap.get(dstId)
+          if(edge == null) {
+            val srcVertex = Vertex(srcId, srcVmap.data, srcVmap.isActive)
+            val dstVertex = Vertex(dstId, dstVmap.data, dstVmap.isActive)
+            edge = Edge(srcVertex,dstVertex, edgeData)
+          } else {
+            edge.source.id = srcId;
+            edge.source.data = srcVmap.data
+            edge.source.isActive = srcVmap.isActive
+            edge.target.id = dstId
+            edge.target.data = dstVmap.data
+            edge.target.isActive = dstVmap.isActive
+            edge.data = edgeData
           }
+          edgeFun(edge, srcVmap, dstVmap)
           i += 1
         }
       }
     }
+    */
+
     // println("ComputeTime:    " + ((System.currentTimeMillis - startTime)/1000.0))
     vmap.iterator.filter( _._2.hasAccum ).map{ case (vid, rec) => (vid, rec.accum) }
   }
