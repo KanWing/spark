@@ -56,7 +56,7 @@ object Analytics {
     val vertices = graph.vertices.leftOuterJoin(outDegree).mapValues {
       case (_, Some(deg)) => (deg, 1.0F)
       case (_, None) => (0, 1.0F)
-    }.cache
+    }
     val edges = graph.edges //.map(v => None)
     val pageRankGraph = new Graph(vertices, edges)
     // Run PageRank
@@ -207,12 +207,14 @@ object Analytics {
         var isDynamic = true
         var tol:Float = 0.001F
         var outFname = ""
+	var numPart = 8
 
         options.foreach{
           case ("numIter", v) => numIter = v.toInt
           case ("dynamic", v) => isDynamic = v.toBoolean
           case ("tol", v) => tol = v.toFloat
           case ("output", v) => outFname = v
+	  case ("numPart", v) => numPart = v.toInt
           case (opt, _) => throw new IllegalArgumentException("Invalid option: " + opt)
         }
 
@@ -231,6 +233,7 @@ object Analytics {
 
         val sc = new SparkContext(host, "PageRank(" + fname + ")")
         val graph = Graph.textFile(sc, fname, a => 1.0F)
+	graph.numPart = numPart
         val startTime = System.currentTimeMillis
         val pr = if(isDynamic) Analytics.dynamicPageRank(graph, tol, numIter)
           else  Analytics.pageRank(graph, numIter)

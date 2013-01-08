@@ -95,7 +95,7 @@ class Graph[VD: Manifest, ED: Manifest](
    */
   lazy val numEdges = edges.count().toInt
 
-  var numProcs = 16
+  var numPart = 32
 
   /**
    * Create a cached in memory copy of the graph.
@@ -128,7 +128,7 @@ class Graph[VD: Manifest, ED: Manifest](
     ClosureCleaner.clean(apply)
     ClosureCleaner.clean(scatter)
 
-    val numProcsLocal = numProcs
+    val numPartLocal = numPart
 
     val sc = edges.context
     // Partition the edges over machines.  The part_edges table has the format
@@ -136,9 +136,9 @@ class Graph[VD: Manifest, ED: Manifest](
 
     var eTable = edges
       .map { case (source, target, data) =>
-        (math.abs(source) % numProcsLocal, EdgeRecord(source, target, data))
+        (math.abs(source) % numPartLocal, EdgeRecord(source, target, data))
       }
-      .partitionBy(new HashPartitioner(numProcs))
+      .partitionBy(new HashPartitioner(numPart))
       .mapPartitionsWithSplit({ (pid, iter) =>
         val edgeBlock = EdgeBlockRecord[ED]()
         iter.foreach{ case (_, record) => edgeBlock.add(record) }
@@ -146,7 +146,7 @@ class Graph[VD: Manifest, ED: Manifest](
       }, preservesPartitioning = true).cache()
 
     // The master vertices are used during the apply phase
-    val vTablePartitioner = new HashPartitioner(numProcsLocal);
+    val vTablePartitioner = new HashPartitioner(numPartLocal);
 
 
     val vid2pid : RDD[(Int, Seq[Int])] = eTable.flatMap {
@@ -275,7 +275,7 @@ class Graph[VD: Manifest, ED: Manifest](
     ClosureCleaner.clean(merge)
     ClosureCleaner.clean(apply)
 
-    val numProcsLocal = numProcs
+    val numPartLocal = numPart
 
     val sc = edges.context
 
@@ -285,9 +285,9 @@ class Graph[VD: Manifest, ED: Manifest](
     // ((pid, source), (target, data))
     var eTable = edges
       .map { case (source, target, data) =>
-        (math.abs(source) % numProcsLocal, EdgeRecord(source, target, data))
+        (math.abs(source) % numPartLocal, EdgeRecord(source, target, data))
       }
-      .partitionBy(new HashPartitioner(numProcsLocal))
+      .partitionBy(new HashPartitioner(numPartLocal))
       .mapPartitionsWithSplit({ (pid, iter) =>
         val edgeBlock = EdgeBlockRecord[ED]()
         iter.foreach{ case (_, record) => edgeBlock.add(record) }
@@ -298,7 +298,7 @@ class Graph[VD: Manifest, ED: Manifest](
     println("Time: " + timer.tic)
 
     // The master vertices are used during the apply phase
-    val vTablePartitioner = new HashPartitioner(numProcsLocal)
+    val vTablePartitioner = new HashPartitioner(numPartLocal)
 
 
     val vid2pid : RDD[(Int, Seq[Int])] = eTable.flatMap {
@@ -313,10 +313,10 @@ class Graph[VD: Manifest, ED: Manifest](
           val pidLocal = pid
           vSet.iterator.map( vid => (vid.intValue, pidLocal) )
         }
-      }.groupByKey(vTablePartitioner) // .cache()
+      }.groupByKey(vTablePartitioner)
 
-    // println("Vid2Pid Count: " + vid2pid.count)
-    // println("Time: " + timer.tic)
+ //   println("Vid2Pid Count: " + vid2pid.count)
+ //   println("Time: " + timer.tic)
 
     var vTable = vertices.partitionBy(vTablePartitioner).leftOuterJoin(vid2pid).mapValues {
         case (vdata, None) => VertexRecord(vdata, true, Array.empty[Pid])
@@ -330,7 +330,7 @@ class Graph[VD: Manifest, ED: Manifest](
     var iter = 0
     while (iter < numIter)  {
 
-      // println("Starting Iteration:")
+       println("Starting Iteration:")
 
       // Gather Phase =========================================================
       val gatherTable = new GraphShardRDD(vTable, eTable,
@@ -346,8 +346,8 @@ class Graph[VD: Manifest, ED: Manifest](
         }, default)
         .combineByKey((i: A) => i, merge, null, vTablePartitioner, false)
 
-      // println("Gather Table Count: " + gatherTable.count)
-      // println("Time: " + timer.tic)
+       // println("Gather Table Count: " + gatherTable.count)
+       // println("Time: " + timer.tic)
 
       // Apply Phase ===========================================================
       // Merge with the gather result
@@ -362,8 +362,8 @@ class Graph[VD: Manifest, ED: Manifest](
         }, preservesPartitioning = true).cache()
 
       // vTable.take(10).foreach(println(_))
-
       // println("VTable Count: " + vTable.count)
+      // vTable.foreach(i => ())
       // println("Time: " + timer.tic)
       // end of iteration
       iter += 1
@@ -398,8 +398,21 @@ object Graph {
     kryo.register(classOf[(Vid,ED)])
     kryo.register(classOf[VertexRecord[VD]])
     kryo.register(classOf[VertexReplica[VD]])
+    kryo.register(classOf[(Vid, VertexRecord[VD])])
+    kryo.register(classOf[(Pid, VertexReplica[VD])])
+
     kryo.register(classOf[EdgeRecord[ED]])
     kryo.register(classOf[EdgeBlockRecord[ED]])
+
+    // kryo.register(classOf[(Vid,Vid,Float)])
+    // kryo.register(classOf[(Vid,Float)])
+    // kryo.register(classOf[VertexRecord[(Int,Float)]])
+    // kryo.register(classOf[VertexReplica[(Int,Float)]])
+    // kryo.register(classOf[(Vid, VertexRecord[(Int,Float)])])
+    // kryo.register(classOf[(Pid, VertexReplica[(Int,Float)])])
+    // kryo.register(classOf[EdgeRecord[Float]])
+    // kryo.register(classOf[EdgeBlockRecord[Float]])
+
   }
 
   /**
@@ -421,12 +434,12 @@ object Graph {
         val tail = lineArray.drop(2)
         val edata = edgeParser(tail)
         (source.trim.toInt, target.trim.toInt, edata)
-      }).cache()
+      })
 
     // Parse the vertex data table
     val vertices = edges.flatMap {
       case (source, target, _) => List((source, 1), (target, 1))
-    }.reduceByKey(_ + _).cache()
+    }.reduceByKey(_ + _)
 
     val graph = new Graph[Int, ED](vertices, edges)
 
@@ -436,34 +449,6 @@ object Graph {
     graph
   }
 
-  // /**
-  //  * Load an edge list from file initializing the Graph RDD
-  //  */
-  // def fromURL[ED: Manifest](sc: SparkContext,
-  //   fname: String, edgeParser: String => ED) = {
-
-  //   println("downloading graph")
-  //   val url = new java.net.URL(fname)
-  //   val content = scala.io.Source.fromInputStream(url.openStream).getLines()
-  //     .map(line => {
-  //       val src :: dst :: body = line.split("\t").toList
-  //       val edata = edgeParser(body.mkString("\t"))
-  //       (src.trim.toInt, dst.trim.toInt, edata)
-  //     }).toArray
-  //   val edges = sc.parallelize(content).cache()
-  //   println("determining vertices")
-  //   // Parse the vertex data table
-  //   val vertices = edges.flatMap {
-  //     case (source, target, _) => List((source, 1), (target, 1))
-  //   }.reduceByKey(_ + _).cache()
-
-  //   val graph = new Graph[Int, ED](vertices, edges)
-
-  //   println("Loaded graph from url:" +
-  //     "\n\t#edges:    " + graph.numEdges +
-  //     "\n\t#vertices: " + graph.numVertices)
-  //   graph
-  // }
 
   /**
    * Construct a simple ball and chain graph.
