@@ -104,8 +104,8 @@ object EdgeDirection extends Enumeration {
  * A Graph RDD that supports computation on graphs.
  */
 class Graph[VD: Manifest, ED: Manifest](
-  val vertices: spark.RDD[(Int, VD)],
-  val edges: spark.RDD[(Int, Int, ED)]) {
+  val vertices: spark.RDD[(Vid, VD)],
+  val edges: spark.RDD[(Vid, Vid, ED)]) {
 
   /**
    * The number of unique vertices in this graph
@@ -141,7 +141,7 @@ class Graph[VD: Manifest, ED: Manifest](
     merge: (A, A) => A,
     default: A,
     apply: (Vertex[VD], A) => VD,
-    scatter: (Vid, Edge[VD, ED]) => Boolean,
+    scatter: (Vid, Edge[VD, ED]) => Status,
     niter: Int,
     gatherEdges: EdgeDirection.Value = EdgeDirection.In,
     scatterEdges: EdgeDirection.Value = EdgeDirection.Out) = {
@@ -173,7 +173,7 @@ class Graph[VD: Manifest, ED: Manifest](
     val vTablePartitioner = new HashPartitioner(numVertexPartLocal);
 
 
-    val vid2pid : RDD[(Int, Seq[Int])] = eTable.flatMap {
+    val vid2pid : RDD[(Int, Seq[Pid])] = eTable.flatMap {
         case (pid, ebr) => {
           val sourceIdArray = ebr.sourceId
           val targetIdArray = ebr.targetId
@@ -233,7 +233,7 @@ class Graph[VD: Manifest, ED: Manifest](
 
       // Scatter Phase =========================================================
       val scatterTable = new GraphShardRDD(vTable, eTable,
-        (edge: Edge[VD,ED], srcAcc: VMapRecord[VD,Boolean], dstAcc: VMapRecord[VD,Boolean]) => {
+        (edge: Edge[VD,ED], srcAcc: VMapRecord[VD,Status], dstAcc: VMapRecord[VD,Status]) => {
           if (edge.target.isActive && (scatterEdges == EdgeDirection.In ||
             scatterEdges == EdgeDirection.Both)) { // gather on the target
             srcAcc.add(scatter(edge.target.id, edge), _ || _)
@@ -243,7 +243,7 @@ class Graph[VD: Manifest, ED: Manifest](
             dstAcc.add(scatter(edge.source.id, edge), _ || _)
           }
         }, false)
-        .combineByKey((i: Boolean) => i, (_: Boolean) || (_:Boolean),
+        .combineByKey((i: Status) => i, (_: Status) || (_:Status),
           null, vTablePartitioner, false)
 
 
@@ -323,7 +323,7 @@ class Graph[VD: Manifest, ED: Manifest](
     val vTablePartitioner = new HashPartitioner(numVertexPartLocal)
 
 
-    val vid2pid : RDD[(Int, Seq[Int])] = eTable.flatMap {
+    val vid2pid : RDD[(Int, Seq[Pid])] = eTable.flatMap {
         case (pid, ebr) => {
           val sourceIdArray = ebr.sourceId
           val targetIdArray = ebr.targetId

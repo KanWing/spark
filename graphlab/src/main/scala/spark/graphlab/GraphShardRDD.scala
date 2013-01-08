@@ -38,7 +38,7 @@ private[spark] class CoGroupAggregator
 
 
 class GraphShardRDD[VD, ED, U ](
-    @transient vTable: spark.RDD[(Vid, (VD, Status, Array[Int]) )],
+    @transient vTable: spark.RDD[(Vid, (VD, Status, Array[Pid]) )],
     eTable: spark.RDD[(Pid, EdgeBlockRecord[ED])],
     edgeFun: ((Edge[VD, ED], VMapRecord[VD,U], VMapRecord[VD,U]) => Unit),
     default: U
@@ -79,9 +79,8 @@ class GraphShardRDD[VD, ED, U ](
     val fetcher = SparkEnv.get.shuffleFetcher
     fetcher.fetch[Pid, (Vid, VD, Status)](shuffleId, split.index).foreach {
       case ( _, (vid, vdata, isActive) ) =>
-        if(!vmap.contains(vid)) vmap.put(vid, new VMapRecord[VD,U](vdata, isActive, default) )
+        vmap.put(vid, new VMapRecord[VD,U](vdata, isActive, default) )
     }
-
 
     // println("FetchedSplits:  " + ((System.currentTimeMillis - startTime)/1000.0))
     //    startTime = System.currentTimeMillis
