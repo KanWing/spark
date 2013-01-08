@@ -310,7 +310,7 @@ object Analytics {
         println("======================================")
 
         val sc = new SparkContext(host, "ConnectedComponents(" + fname + ")")
-        val graph = Graph.textFile(sc, fname, a => (if(a.isEmpty) 1.0F else a.toFloat ) )
+        val graph = Graph.textFile(sc, fname, a => (if(a.isEmpty) 1.0F else a(0).toFloat ) )
         val cc = if(isDynamic) Analytics.dynamicShortestPath(graph, sources, numIter)
           else  Analytics.shortestPath(graph, sources, numIter)
         println("Longest Path: " + cc.map(_._2).reduce(math.max(_,_)))

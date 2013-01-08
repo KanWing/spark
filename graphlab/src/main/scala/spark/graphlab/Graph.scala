@@ -313,10 +313,10 @@ class Graph[VD: Manifest, ED: Manifest](
           val pidLocal = pid
           vSet.iterator.map( vid => (vid.intValue, pidLocal) )
         }
-      }.groupByKey(vTablePartitioner).cache()
+      }.groupByKey(vTablePartitioner) // .cache()
 
-    println("Vid2Pid Count: " + vid2pid.count)
-    println("Time: " + timer.tic)
+    // println("Vid2Pid Count: " + vid2pid.count)
+    // println("Time: " + timer.tic)
 
     var vTable = vertices.partitionBy(vTablePartitioner).leftOuterJoin(vid2pid).mapValues {
         case (vdata, None) => VertexRecord(vdata, true, Array.empty[Pid])
@@ -406,16 +406,20 @@ object Graph {
    * Load an edge list from file initializing the Graph RDD
    */
   def textFile[ED: Manifest](sc: SparkContext,
-    fname: String, edgeParser: String => ED) = {
+    fname: String, edgeParser: Array[String] => ED) = {
 
     // Parse the edge data table
     val edges = sc.textFile(fname).map(
       line => {
-        val lineArray = line.split("\t")
+        val lineArray = line.split("\\s+")
+        if(lineArray.length < 2) {
+          println("Invalid line: " + line)
+          assert(false)
+        }
         val source = lineArray(0)
         val target = lineArray(1)
-        val tail = lineArray.drop(2).mkString("\t")
-        val edata = edgeParser(tail.mkString("\t"))
+        val tail = lineArray.drop(2)
+        val edata = edgeParser(tail)
         (source.trim.toInt, target.trim.toInt, edata)
       }).cache()
 
@@ -432,34 +436,34 @@ object Graph {
     graph
   }
 
-  /**
-   * Load an edge list from file initializing the Graph RDD
-   */
-  def fromURL[ED: Manifest](sc: SparkContext,
-    fname: String, edgeParser: String => ED) = {
+  // /**
+  //  * Load an edge list from file initializing the Graph RDD
+  //  */
+  // def fromURL[ED: Manifest](sc: SparkContext,
+  //   fname: String, edgeParser: String => ED) = {
 
-    println("downloading graph")
-    val url = new java.net.URL(fname)
-    val content = scala.io.Source.fromInputStream(url.openStream).getLines()
-      .map(line => {
-        val src :: dst :: body = line.split("\t").toList
-        val edata = edgeParser(body.mkString("\t"))
-        (src.trim.toInt, dst.trim.toInt, edata)
-      }).toArray
-    val edges = sc.parallelize(content).cache()
-    println("determining vertices")
-    // Parse the vertex data table
-    val vertices = edges.flatMap {
-      case (source, target, _) => List((source, 1), (target, 1))
-    }.reduceByKey(_ + _).cache()
+  //   println("downloading graph")
+  //   val url = new java.net.URL(fname)
+  //   val content = scala.io.Source.fromInputStream(url.openStream).getLines()
+  //     .map(line => {
+  //       val src :: dst :: body = line.split("\t").toList
+  //       val edata = edgeParser(body.mkString("\t"))
+  //       (src.trim.toInt, dst.trim.toInt, edata)
+  //     }).toArray
+  //   val edges = sc.parallelize(content).cache()
+  //   println("determining vertices")
+  //   // Parse the vertex data table
+  //   val vertices = edges.flatMap {
+  //     case (source, target, _) => List((source, 1), (target, 1))
+  //   }.reduceByKey(_ + _).cache()
 
-    val graph = new Graph[Int, ED](vertices, edges)
+  //   val graph = new Graph[Int, ED](vertices, edges)
 
-    println("Loaded graph from url:" +
-      "\n\t#edges:    " + graph.numEdges +
-      "\n\t#vertices: " + graph.numVertices)
-    graph
-  }
+  //   println("Loaded graph from url:" +
+  //     "\n\t#edges:    " + graph.numEdges +
+  //     "\n\t#vertices: " + graph.numVertices)
+  //   graph
+  // }
 
   /**
    * Construct a simple ball and chain graph.
