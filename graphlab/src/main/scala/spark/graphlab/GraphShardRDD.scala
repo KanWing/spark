@@ -37,7 +37,7 @@ private[spark] class CoGroupAggregator
   with Serializable
 
 
-class GraphShardRDD[VD, ED, U](
+class GraphShardRDD[VD : ClassManifest, ED : ClassManifest, U : ClassManifest](
     @transient vTable: spark.RDD[(Vid, VertexRecord[VD])],
     eTable: spark.RDD[(Pid, EdgeBlockRecord[ED])],
     edgeFun: ((Edge[VD, ED], VMapRecord[VD,U], VMapRecord[VD,U]) => Unit),
@@ -88,7 +88,12 @@ class GraphShardRDD[VD, ED, U](
 
     eTable.iterator(split.eTableSplit, context).foreach {
       // get a block of all the edges with the same Pid
-      case(pid, EdgeBlockRecord(sourceIdArray, targetIdArray , dataArray)) => {
+      case(pid, ebr) => {
+
+        val sourceIdArray = ebr.sourceId
+        val targetIdArray = ebr.targetId
+        val dataArray = ebr.data
+
         val numEdges = sourceIdArray.length
         var i = 0
         var edge: Edge[VD,ED] = null
@@ -104,9 +109,9 @@ class GraphShardRDD[VD, ED, U](
           assert(dstVmap != null)
 
           if(edge == null) {
-            val srcVertex = Vertex(srcId, srcVmap.data, srcVmap.isActive)
-            val dstVertex = Vertex(dstId, dstVmap.data, dstVmap.isActive)
-            edge = Edge(srcVertex, dstVertex, edgeData)
+            val srcVertex = new Vertex(srcId, srcVmap.data, srcVmap.isActive)
+            val dstVertex = new Vertex(dstId, dstVmap.data, dstVmap.isActive)
+            edge = new Edge(srcVertex, dstVertex, edgeData)
           } else {
             edge.source.id = srcId;
             edge.source.data = srcVmap.data

@@ -7,11 +7,13 @@ import com.esotericsoftware.kryo._
 
 class AnalyticsKryoRegistrator extends KryoRegistrator {
   def registerClasses(kryo: Kryo) {
+    println("registering kryo")
     kryo.register(classOf[(Int,Float,Float)])
     Graph.kryoRegister[(Int,Float,Float), Float](kryo)
     Graph.kryoRegister[(Int,Float), Float](kryo)
     Graph.kryoRegister[Int, Float](kryo)
     Graph.kryoRegister[Float, Float](kryo)
+    kryo.setReferences(false);
   }
 }
 
@@ -21,7 +23,8 @@ object Analytics {
   /**
    * Compute the PageRank of a graph returning the pagerank of each vertex as an RDD
    */
-  def dynamicPageRank[VD: Manifest, ED: Manifest](graph: Graph[VD, ED], tol: Float, maxIter: Int = 10) = {
+  def dynamicPageRank[VD: ClassManifest, ED: ClassManifest](graph: Graph[VD, ED],
+    tol: Float, maxIter: Int = 10) = {
     graph.edges.cache
     // Compute the out degree of each vertex
     val outDegree = graph.edges.map { case (src, target, data) => (src, 1)}.reduceByKey(_ + _)
@@ -49,7 +52,7 @@ object Analytics {
   /**
    * Compute the PageRank of a graph returning the pagerank of each vertex as an RDD
    */
-  def pageRank[VD: Manifest, ED: Manifest](graph: Graph[VD, ED], maxIter: Int) = {
+  def pageRank[VD: ClassManifest, ED: ClassManifest](graph: Graph[VD, ED], maxIter: Int) = {
     graph.edges.cache
     // Compute the out degree of each vertex
     val outDegree = graph.edges.map { case (src, target, data) => (src, 1)}.reduceByKey(_ + _)
@@ -77,7 +80,7 @@ object Analytics {
    * lowest vertex id in the connected component containing
    * that vertex.
    */
-  def dynamicConnectedComponents[VD: Manifest, ED: Manifest](graph: Graph[VD, ED],
+  def dynamicConnectedComponents[VD: ClassManifest, ED: ClassManifest](graph: Graph[VD, ED],
     numIter: Int = Int.MaxValue) = {
 
     val vertices = graph.vertices.mapPartitions(iter => iter.map { case (vid, _) => (vid, vid) })
@@ -105,7 +108,7 @@ object Analytics {
    * lowest vertex id in the connected component containing
    * that vertex.
    */
-  def connectedComponents[VD: Manifest, ED: Manifest](graph: Graph[VD, ED], numIter: Int) = {
+  def connectedComponents[VD: ClassManifest, ED: ClassManifest](graph: Graph[VD, ED], numIter: Int) = {
 
     val vertices = graph.vertices.mapPartitions(iter => iter.map { case (vid, _) => (vid, vid) })
     val edges = graph.edges // .mapValues(v => None)
@@ -132,7 +135,7 @@ object Analytics {
    * lowest vertex id in the connected component containing
    * that vertex.
    */
-  def dynamicShortestPath[VD: Manifest, ED: Manifest](graph: Graph[VD, Float],
+  def dynamicShortestPath[VD: ClassManifest, ED: ClassManifest](graph: Graph[VD, Float],
     sources: List[Int], numIter: Int) = {
     val sourceSet = sources.toSet
     val vertices = graph.vertices.mapPartitions(
@@ -162,7 +165,7 @@ object Analytics {
    * lowest vertex id in the connected component containing
    * that vertex.
    */
-  def shortestPath[VD: Manifest, ED: Manifest](graph: Graph[VD, Float],
+  def shortestPath[VD: ClassManifest, ED: ClassManifest](graph: Graph[VD, Float],
     sources: List[Int], numIter: Int) = {
     val sourceSet = sources.toSet
     val vertices = graph.vertices.mapPartitions(
@@ -207,14 +210,16 @@ object Analytics {
         var isDynamic = true
         var tol:Float = 0.001F
         var outFname = ""
-	var numPart = 8
+        var numVPart = 512
+        var numEPart = 4
 
         options.foreach{
           case ("numIter", v) => numIter = v.toInt
           case ("dynamic", v) => isDynamic = v.toBoolean
           case ("tol", v) => tol = v.toFloat
           case ("output", v) => outFname = v
-	  case ("numPart", v) => numPart = v.toInt
+          case ("numVPart", v) => numVPart = v.toInt
+          case ("numEPart", v) => numEPart = v.toInt
           case (opt, _) => throw new IllegalArgumentException("Invalid option: " + opt)
         }
 
@@ -233,7 +238,8 @@ object Analytics {
 
         val sc = new SparkContext(host, "PageRank(" + fname + ")")
         val graph = Graph.textFile(sc, fname, a => 1.0F)
-	graph.numPart = numPart
+        graph.numVertexPart = numVPart
+        graph.numEdgePart = numEPart
         val startTime = System.currentTimeMillis
         val pr = if(isDynamic) Analytics.dynamicPageRank(graph, tol, numIter)
           else  Analytics.pageRank(graph, numIter)
