@@ -33,12 +33,12 @@ private[spark] class CoGroupAggregator
   extends Aggregator[Any, Any, ArrayBuffer[Any]](
     { x => ArrayBuffer(x) },
     { (b, x) => b += x },
-    null)
+    {(b1, b2) => b1 ++ b2})
   with Serializable
 
 
-class GraphShardRDD[VD : ClassManifest, ED : ClassManifest, U : ClassManifest](
-    @transient vTable: spark.RDD[(Vid, VertexRecord[VD])],
+class GraphShardRDD[VD, ED, U ](
+    @transient vTable: spark.RDD[(Vid, (VD, Status, Array[Int]) )],
     eTable: spark.RDD[(Pid, EdgeBlockRecord[ED])],
     edgeFun: ((Edge[VD, ED], VMapRecord[VD,U], VMapRecord[VD,U]) => Unit),
     default: U
@@ -47,7 +47,8 @@ class GraphShardRDD[VD : ClassManifest, ED : ClassManifest, U : ClassManifest](
   // Join vid2pid and vTable, generate a shuffle dependency on the joined result, and get
   // the shuffle id so we can use it on the slave.
   @transient val vTableReplicated = vTable.flatMap {
-    case (vid, vrec) => vrec.replicate(vid)
+    case (vid, (vdata, isActive, pids)) =>
+      pids.iterator.map(pid => (pid, (vid, vdata, isActive)))
   }
   @transient val shuffleDependency = new ShuffleDependency(vTableReplicated, eTable.partitioner.get)
   val shuffleId = shuffleDependency.shuffleId
@@ -71,15 +72,14 @@ class GraphShardRDD[VD : ClassManifest, ED : ClassManifest, U : ClassManifest](
   override def compute(s: Split, context: TaskContext): Iterator[(Vid, U)] = {
 
     val split = s.asInstanceOf[GraphShardSplit]
-    val vmap = new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap[VMapRecord[VD, U]](1000000)
+    val vmap = new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap[VMapRecord[VD, U]]//(1000000)
 
 
     // var startTime = System.currentTimeMillis
-
     val fetcher = SparkEnv.get.shuffleFetcher
-    fetcher.fetch[Pid, VertexReplica[VD]](shuffleId, split.index).foreach {
-      case ( _, vrec ) =>
-        vmap.put(vrec.id, new VMapRecord[VD,U](vrec.data, vrec.isActive, default) )
+    fetcher.fetch[Pid, (Vid, VD, Status)](shuffleId, split.index).foreach {
+      case ( _, (vid, vdata, isActive) ) =>
+        if(!vmap.contains(vid)) vmap.put(vid, new VMapRecord[VD,U](vdata, isActive, default) )
     }
 
 

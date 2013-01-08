@@ -35,31 +35,30 @@ class Timer {
 /**
  * Class containing the id and value of a vertex
  */
-class Vertex[@specialized(Char, Int, Boolean, Byte, Long, Float, Double)VD : ClassManifest](
+class Vertex[@specialized(Char, Int, Boolean, Byte, Long, Float, Double)VD ](
   var id: Vid, var data: VD, var isActive: Status = true)
 
 /**
  * Class containing both vertices and the edge data associated with an edge
  */
 class Edge[
-@specialized(Char, Int, Boolean, Byte, Long, Float, Double)VD : ClassManifest,
-@specialized(Char, Int, Boolean, Byte, Long, Float, Double)ED : ClassManifest](
+@specialized(Char, Int, Boolean, Byte, Long, Float, Double)VD,
+@specialized(Char, Int, Boolean, Byte, Long, Float, Double)ED](
   var source: Vertex[VD], var target: Vertex[VD], var data: ED) {
   def otherVertex(vid: Vid) = { if (source.id == vid) target else source; }
   def vertex(vid: Vid) = { if (source.id == vid) source else target; }
 } // end of class edge
 
 
-class EdgeRecord[
-@specialized(Char, Int, Boolean, Byte, Long, Float, Double) ED : ClassManifest](
-  val sourceId: Vid, val targetId: Vid, val data: ED)
+// class EdgeRecord[
+// @specialized(Char, Int, Boolean, Byte, Long, Float, Double) ED : ClassManifest](
+//   val sourceId: Vid, val targetId: Vid, val data: ED)
 
 
 class EdgeBlockRecord[
-@specialized(Char, Int, Boolean, Byte, Long, Float, Double) ED : ClassManifest](
+@specialized(Char, Int, Boolean, Byte, Long, Float, Double) ED](
   val sourceId: IntArrayList = new IntArrayList, val targetId: IntArrayList = new IntArrayList,
   val data: ArrayBuffer[ED] = new ArrayBuffer[ED]) {
-  def add(rec: EdgeRecord[ED]) { add(rec.sourceId, rec.targetId, rec.data) }
   def add(srcId: Vid, dstId: Vid, eData: ED) {
     sourceId.add(srcId)
     targetId.add(dstId)
@@ -68,27 +67,27 @@ class EdgeBlockRecord[
 }
 
 
-class VertexReplica[
-@specialized(Char, Int, Boolean, Byte, Long, Float, Double)VD : ClassManifest](
-  var id: Vid, var data: VD, var isActive: Status) extends KryoSerializable {
-  def read(kryo: Kryo, in: io.Input) {
-    id = in.readInt()
-    data = kryo.readObject(in, data.getClass)
-    isActive = in.readBoolean()
-  }
-  def write(kryo: Kryo, out: io.Output) {
-    out.writeInt(id)
-    kryo.writeObject(out, data)
-    out.writeBoolean(isActive)
-  }
-}
+// class VertexReplica[
+// @specialized(Char, Int, Boolean, Byte, Long, Float, Double)VD : ClassManifest](
+//   var id: Vid, var data: VD, var isActive: Status) extends KryoSerializable {
+//   def read(kryo: Kryo, in: io.Input) {
+//     id = in.readInt()
+//     data = kryo.readObject(in, data.getClass)
+//     isActive = in.readBoolean()
+//   }
+//   def write(kryo: Kryo, out: io.Output) {
+//     out.writeInt(id)
+//     kryo.writeObject(out, data)
+//     out.writeBoolean(isActive)
+//   }
+// }
 
 
-class VertexRecord[
-@specialized(Char, Int, Boolean, Byte, Long, Float, Double)VD : ClassManifest](
-  var data: VD, var isActive: Status, var pids: Array[Pid]) {
-  def replicate(id: Vid) = pids.iterator.map(pid => (pid, new VertexReplica(id, data, isActive)))
-}
+// class VertexRecord[
+// @specialized(Char, Int, Boolean, Byte, Long, Float, Double)VD : ClassManifest](
+//   var data: VD, var isActive: Status, var pids: Array[Pid]) {
+//   def replicate(id: Vid) = pids.iterator.map(pid => (pid, new VertexReplica(id, data, isActive)))
+// }
 
 
 
@@ -104,7 +103,7 @@ object EdgeDirection extends Enumeration {
 /**
  * A Graph RDD that supports computation on graphs.
  */
-class Graph[VD: ClassManifest, ED: ClassManifest](
+class Graph[VD: Manifest, ED: Manifest](
   val vertices: spark.RDD[(Int, VD)],
   val edges: spark.RDD[(Int, Int, ED)]) {
 
@@ -118,8 +117,8 @@ class Graph[VD: ClassManifest, ED: ClassManifest](
    */
   lazy val numEdges = edges.count().toInt
 
-  var numEdgePart = 32
-  var numVertexPart = 512
+  var numEdgePart = 4
+  var numVertexPart = 4
 
   /**
    * Create a cached in memory copy of the graph.
@@ -137,7 +136,7 @@ class Graph[VD: ClassManifest, ED: ClassManifest](
    * gather: (center_vid, edge) => accumulator
    * Todo: Finish commenting
    */
-  def iterateDynamic[A: ClassManifest](
+  def iterateDynamic[A: Manifest](
     gather: (Vid, Edge[VD, ED]) => A,
     merge: (A, A) => A,
     default: A,
@@ -161,12 +160,12 @@ class Graph[VD: ClassManifest, ED: ClassManifest](
 
     var eTable = edges
       .map { case (source, target, data) =>
-        (math.abs(source) % numEdgePartLocal, new EdgeRecord(source, target, data))
+        (math.abs(source) % numEdgePartLocal, (source, target, data))
       }
       .partitionBy(new HashPartitioner(numEdgePartLocal))
       .mapPartitionsWithSplit({ (pid, iter) =>
         val edgeBlock = new EdgeBlockRecord[ED]()
-        iter.foreach{ case (_, record) => edgeBlock.add(record) }
+        iter.foreach{ case (_, (srcId, dstId, data)) => edgeBlock.add(srcId, dstId, data) }
         Iterator((pid, edgeBlock))
       }, preservesPartitioning = true).cache()
 
@@ -191,11 +190,9 @@ class Graph[VD: ClassManifest, ED: ClassManifest](
       }.groupByKey(vTablePartitioner)
 
 
-
-
     var vTable = vertices.partitionBy(vTablePartitioner).leftOuterJoin(vid2pid).mapValues {
-        case (vdata, None) => new VertexRecord(vdata, true, Array.empty[Pid])
-        case (vdata, Some(pids)) => new VertexRecord(vdata, true, pids.toArray)
+        case (vdata, None) => (vdata, true, Array.empty[Pid])
+        case (vdata, Some(pids)) => (vdata, true, pids.toArray)
       }.cache()
 
 
@@ -228,12 +225,9 @@ class Graph[VD: ClassManifest, ED: ClassManifest](
       // Apply Phase ===========================================================
       // Merge with the gather result
       vTable = vTable.leftOuterJoin(gatherTable).mapPartitions( _.map {
-          case (vid, (vrec, accum)) => {
-            if(vrec.isActive)
-              vrec.data = apply(new Vertex(vid, vrec.data), accum.getOrElse(default))
-            else assert(accum.isEmpty)
-            (vid, vrec)
-          }
+        case (vid, ((vdata, isActive, pids), accum)) => (vid,
+            ((if(isActive) apply(new Vertex(vid, vdata), accum.getOrElse(default)) else vdata),
+             isActive, pids))
         }, preservesPartitioning = true).cache()
 
 
@@ -255,10 +249,12 @@ class Graph[VD: ClassManifest, ED: ClassManifest](
 
       // update active vertices
       numActive.value = 0
+
       vTable = vTable.leftOuterJoin(scatterTable).mapPartitions( _.map {
-          case (vid, (vrec, isActive)) => {
-            vrec.isActive = isActive.getOrElse(false)
-            (vid, vrec)
+        case (vid, ((vdata, isActive, pids), isActiveOption)) => {
+          val newIsActive = isActiveOption.getOrElse(false)
+          if(newIsActive) numActive +=1
+          (vid, (vdata, newIsActive, pids))
           }
         }, preservesPartitioning = true).cache()
 
@@ -274,7 +270,7 @@ class Graph[VD: ClassManifest, ED: ClassManifest](
     // Collapse vreplicas, edges and retuen a new graph
     // new Graph(vTable.map { case (vid, VertexRecord(vdata, _, _)) => (vid, vdata) },
     //   eTable.map { case (pid, EdgeRecord(source, target, edata)) => (source, target, edata) })
-    new Graph(vTable.map { case (vid, vrec) => (vid, vrec.data) }, edges)
+    new Graph(vTable.map { case (vid, (vdata,_,_)) => (vid, vdata) }, edges)
 
   } // End of iterate
 
@@ -287,7 +283,7 @@ class Graph[VD: ClassManifest, ED: ClassManifest](
    * gather: (center_vid, edge) => accumulator
    * Todo: Finish commenting
    */
-  def iterateStatic[A: ClassManifest](
+  def iterateStatic[A: Manifest](
     gather: (Vid, Edge[VD, ED]) => A,
     merge: (A, A) => A,
     default: A,
@@ -308,14 +304,15 @@ class Graph[VD: ClassManifest, ED: ClassManifest](
 
     // Partition the edges over machines.  The part_edges table has the format
     // ((pid, source), (target, data))
-    var eTable = edges
+
+     var eTable = edges
       .map { case (source, target, data) =>
-        (math.abs(source) % numEdgePartLocal, new EdgeRecord(source, target, data))
+        (math.abs(source) % numEdgePartLocal, (source, target, data))
       }
       .partitionBy(new HashPartitioner(numEdgePartLocal))
       .mapPartitionsWithSplit({ (pid, iter) =>
         val edgeBlock = new EdgeBlockRecord[ED]()
-        iter.foreach{ case (_, record) => edgeBlock.add(record) }
+        iter.foreach{ case (_, (srcId, dstId, data)) => edgeBlock.add(srcId, dstId, data) }
         Iterator((pid, edgeBlock))
       }, preservesPartitioning = true).cache()
 
@@ -345,9 +342,10 @@ class Graph[VD: ClassManifest, ED: ClassManifest](
  //   println("Vid2Pid Count: " + vid2pid.count)
  //   println("Time: " + timer.tic)
 
+
     var vTable = vertices.partitionBy(vTablePartitioner).leftOuterJoin(vid2pid).mapValues {
-        case (vdata, None) => new VertexRecord(vdata, true, Array.empty[Pid])
-        case (vdata, Some(pids)) => new VertexRecord(vdata, true, pids.toArray)
+        case (vdata, None) => (vdata, true, Array.empty[Pid])
+        case (vdata, Some(pids)) => (vdata, true, pids.toArray)
       }.cache()
 
     println("VTable Count: " + vTable.count)
@@ -357,16 +355,16 @@ class Graph[VD: ClassManifest, ED: ClassManifest](
     var iter = 0
     while (iter < numIter)  {
 
-       println("Starting Iteration:")
+      // println("Starting Iteration:")
 
       // Gather Phase =========================================================
       val gatherTable = new GraphShardRDD(vTable, eTable,
         (edge: Edge[VD, ED], srcAcc: VMapRecord[VD,A], dstAcc: VMapRecord[VD,A]) => {
-          if (edge.target.isActive && (gatherEdges == EdgeDirection.In ||
+          if (/*edge.target.isActive && */(gatherEdges == EdgeDirection.In ||
             gatherEdges == EdgeDirection.Both)) { // gather on the target
             dstAcc.add(gather(edge.target.id, edge), merge)
           }
-          if (edge.source.isActive && (gatherEdges == EdgeDirection.Out ||
+          if (/*edge.source.isActive &&*/ (gatherEdges == EdgeDirection.Out ||
           gatherEdges == EdgeDirection.Both)) { // gather on the source
             srcAcc.add(gather(edge.source.id, edge), merge)
           }
@@ -378,13 +376,11 @@ class Graph[VD: ClassManifest, ED: ClassManifest](
 
       // Apply Phase ===========================================================
       // Merge with the gather result
+
       vTable = vTable.leftOuterJoin(gatherTable).mapPartitions( _.map {
-          case (vid, (vrec, accum)) => {
-            if(vrec.isActive)
-              vrec.data = apply(new Vertex(vid, vrec.data), accum.getOrElse(default))
-            else assert(accum.isEmpty)
-            (vid, vrec)
-          }
+        case (vid, ((vdata, isActive, pids), accum)) => (vid,
+          ((if(isActive) apply(new Vertex(vid, vdata), accum.getOrElse(default)) else vdata),
+          isActive, pids))
         }, preservesPartitioning = true).cache()
 
       // vTable.take(10).foreach(println(_))
@@ -402,7 +398,7 @@ class Graph[VD: ClassManifest, ED: ClassManifest](
     // Collapse vreplicas, edges and retuen a new graph
     // new Graph(vTable.map { case (vid, VertexRecord(vdata, _, _)) => (vid, vdata) },
     //   eTable.map { case (pid, EdgeRecord(source, target, edata)) => (source, target, edata) })
-    new Graph(vTable.map { case (vid, vrec) => (vid, vrec.data) }, edges)
+    new Graph(vTable.map { case (vid, (vdata,_,_)) => (vid, vdata) }, edges)
 
   } // End of iterate
 
@@ -420,17 +416,11 @@ object Graph {
 
 
 
-  def kryoRegister[VD: ClassManifest, ED: ClassManifest](kryo: Kryo) {
-    kryo.register(classManifest[VD].erasure)
-    kryo.register(classManifest[ED].erasure)
+  def kryoRegister[VD: Manifest, ED: Manifest](kryo: Kryo) {
+    //kryo.register(classManifest[VD].erasure)
+    // kryo.register(classManifest[ED].erasure)
     kryo.register(classOf[(Vid,Vid,ED)])
     kryo.register(classOf[(Vid,ED)])
-    kryo.register(classOf[VertexRecord[VD]])
-    kryo.register(classOf[VertexReplica[VD]])
-    kryo.register(classOf[(Vid, VertexRecord[VD])])
-    kryo.register(classOf[(Pid, VertexReplica[VD])])
-
-    kryo.register(classOf[EdgeRecord[ED]])
     kryo.register(classOf[EdgeBlockRecord[ED]])
 
     // kryo.register(classOf[(Vid,Vid,Float)])
@@ -447,7 +437,7 @@ object Graph {
   /**
    * Load an edge list from file initializing the Graph RDD
    */
-  def textFile[ED: ClassManifest](sc: SparkContext,
+  def textFile[ED: Manifest](sc: SparkContext,
     fname: String, edgeParser: Array[String] => ED) = {
 
     // Parse the edge data table

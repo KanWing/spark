@@ -23,7 +23,7 @@ object Analytics {
   /**
    * Compute the PageRank of a graph returning the pagerank of each vertex as an RDD
    */
-  def dynamicPageRank[VD: ClassManifest, ED: ClassManifest](graph: Graph[VD, ED],
+  def dynamicPageRank[VD: Manifest, ED: Manifest](graph: Graph[VD, ED],
     tol: Float, maxIter: Int = 10) = {
     graph.edges.cache
     // Compute the out degree of each vertex
@@ -52,7 +52,7 @@ object Analytics {
   /**
    * Compute the PageRank of a graph returning the pagerank of each vertex as an RDD
    */
-  def pageRank[VD: ClassManifest, ED: ClassManifest](graph: Graph[VD, ED], maxIter: Int) = {
+  def pageRank[VD: Manifest, ED: Manifest](graph: Graph[VD, ED], maxIter: Int) = {
     graph.edges.cache
     // Compute the out degree of each vertex
     val outDegree = graph.edges.map { case (src, target, data) => (src, 1)}.reduceByKey(_ + _)
@@ -80,7 +80,7 @@ object Analytics {
    * lowest vertex id in the connected component containing
    * that vertex.
    */
-  def dynamicConnectedComponents[VD: ClassManifest, ED: ClassManifest](graph: Graph[VD, ED],
+  def dynamicConnectedComponents[VD: Manifest, ED: Manifest](graph: Graph[VD, ED],
     numIter: Int = Int.MaxValue) = {
 
     val vertices = graph.vertices.mapPartitions(iter => iter.map { case (vid, _) => (vid, vid) })
@@ -108,7 +108,7 @@ object Analytics {
    * lowest vertex id in the connected component containing
    * that vertex.
    */
-  def connectedComponents[VD: ClassManifest, ED: ClassManifest](graph: Graph[VD, ED], numIter: Int) = {
+  def connectedComponents[VD: Manifest, ED: Manifest](graph: Graph[VD, ED], numIter: Int) = {
 
     val vertices = graph.vertices.mapPartitions(iter => iter.map { case (vid, _) => (vid, vid) })
     val edges = graph.edges // .mapValues(v => None)

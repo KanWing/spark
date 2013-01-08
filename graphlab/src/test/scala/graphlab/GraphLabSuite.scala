@@ -67,7 +67,7 @@ class GraphLabSuite extends FunSuite with Assertions with BeforeAndAfter {
     val graph = Graph.ballAndChain(sc)
     println("Making solution RDD")
     val ccId = Analytics.connectedComponents(graph, 5)
-    println("Solution RDD constructed !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+    println("Solution RDD constructed")
     val all1 = ccId.map(_._2 == 1).reduce(_ && _)
     assert(all1)
   }
