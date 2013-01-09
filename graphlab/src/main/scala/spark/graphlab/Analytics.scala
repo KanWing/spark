@@ -439,25 +439,4 @@ object Analytics {
   }
 
 
-
-
-
-
-  //   println("One Iteration of PageRank on a large real graph")
-  //   //    val graph = Graph.fromURL(sc, "http://parallel.ml.cmu.edu/share/google.tsv", a => true)
-  //   val graph = Graph.textFile(sc, fname, a => true)
-  //   println("\n\n\n\n\n\n")
-  //   if(args.length > 2) {
-  //     val numIter = args(2).toInt
-  //     println("Running pagerank with numIter: " + numIter)
-  //     val pr = Analytics.pageRank(graph, numIter)
-  //     println("Total rank: " + pr.map(_._2).reduce(_+_))
-
-  //   } else {
-  //     println("Running Dynamic pagerank")
-  //     val pr = Analytics.dynamicPageRank(graph)
-  //     println("Total rank: " + pr.map(_._2).reduce(_+_))
-  //   }
-  // }
-
 }
