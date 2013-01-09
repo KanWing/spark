@@ -212,8 +212,16 @@ object Analytics {
         val XtX = (for(i <- 0 until latentK; j <- i until latentK) yield(X(i) * X(j))).toArray
         (Xy, XtX)
       },
-      (a, b) =>
-        (a._1.zip(b._1).map{ case (q,r) => q+r }, a._2.zip(b._2).map{ case (q,r) => q+r }),
+      (a, b) => {
+      // The difference between the while loop and the zip is a FACTOR OF TWO in overall
+      //  runtime
+        var i = 0
+        while(i < a._1.length) { a._1(i) += b._1(i); i += 1 }
+        i = 0
+        while(i < a._2.length) { a._2(i) += b._2(i); i += 1 }
+        a
+        // (a._1.zip(b._1).map{ case (q,r) => q+r }, a._2.zip(b._2).map{ case (q,r) => q+r })
+      },
       (Array.empty[Double], Array.empty[Double]), // default value is empty
       (vertex, accum) => { // apply
         val XyArray  = accum._1
