@@ -155,6 +155,9 @@ class Graph[VD: Manifest, ED: Manifest](
     val numEPartLocal = numEPart
     val numVPartLocal = numVPart
 
+    val timer = new Timer
+
+
     // Partition the edges over machines.  The part_edges table has the format
     // ((pid, source), (target, data))
 
@@ -168,6 +171,11 @@ class Graph[VD: Manifest, ED: Manifest](
         iter.foreach{ case (_, (srcId, dstId, data)) => edgeBlock.add(srcId, dstId, data) }
         Iterator((pid, edgeBlock))
       }, preservesPartitioning = true).cache()
+
+
+    println("EdgeTable count: " + eTable.count)
+    println("Time: " + timer.tic)
+
 
     // The master vertices are used during the apply phase
     val vTablePartitioner = new HashPartitioner(numVPartLocal);
@@ -198,11 +206,15 @@ class Graph[VD: Manifest, ED: Manifest](
           (vid, (vdata, startActive(Vertex(vid,vdata,false)), pids.toArray))
       }, preservesPartitioning = true).cache
 
+    println("VTable Count: " + vTable.count)
+    println("Time: " + timer.tic)
 
     // Loop until convergence or there are no active vertices
     var iter = 0
     val numActive = eTable.context.accumulator(vTable.filter(_._2._2).count.toInt)
     // var numActive = vTable.filter(_._2._2).count
+
+    val runtime = new Timer
 
     while (iter < niter && numActive.value > 0) {
     // while (iter < niter && numActive > 0) {
@@ -210,7 +222,7 @@ class Graph[VD: Manifest, ED: Manifest](
       println("\n\n==========================================================")
       println("Begin iteration: " + iter)
       println("Active:          " + numActive)
-
+      timer.tic
       // Gather Phase =========================================================
       val gatherTable = new GraphShardRDD(vTable, eTable,
         (edge: Edge[VD, ED], srcAcc: VMapRecord[VD,A], dstAcc: VMapRecord[VD,A]) => {
@@ -263,11 +275,13 @@ class Graph[VD: Manifest, ED: Manifest](
       // Force the vtable to be computed and determine the number of active vertices
       vTable.foreach(i => ())
       println("Number of active vertices: " + numActive.value)
+      println("Finished iteration " + iter + " in " + timer.tic + " seconds.")
 
       iter += 1
     }
     println("=========================================")
-    println("Finished in " + iter + " iterations.")
+    println("Finished computing " + iter + " iterations in " + runtime.tic + " seconds.")
+
 
     // Collapse vreplicas, edges and retuen a new graph
     // new Graph(vTable.map { case (vid, VertexRecord(vdata, _, _)) => (vid, vdata) },
@@ -307,7 +321,7 @@ class Graph[VD: Manifest, ED: Manifest](
     // Partition the edges over machines.  The part_edges table has the format
     // ((pid, source), (target, data))
 
-     var eTable = edges
+    var eTable = edges
       .map { case (source, target, data) =>
         (math.abs(source) % numEPartLocal, (source, target, data))
       }
