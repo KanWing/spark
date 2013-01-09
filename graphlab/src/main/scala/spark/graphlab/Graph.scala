@@ -35,13 +35,13 @@ class Timer {
 /**
  * Class containing the id and value of a vertex
  */
-class Vertex[@specialized(Char, Int, Boolean, Byte, Long, Float, Double)VD ](
+case class Vertex[@specialized(Char, Int, Boolean, Byte, Long, Float, Double)VD ](
   var id: Vid, var data: VD, var isActive: Status = true)
 
 /**
  * Class containing both vertices and the edge data associated with an edge
  */
-class Edge[
+case class Edge[
 @specialized(Char, Int, Boolean, Byte, Long, Float, Double)VD,
 @specialized(Char, Int, Boolean, Byte, Long, Float, Double)ED](
   var source: Vertex[VD], var target: Vertex[VD], var data: ED) {
@@ -117,8 +117,8 @@ class Graph[VD: Manifest, ED: Manifest](
    */
   lazy val numEdges = edges.count().toInt
 
-  var numEdgePart = 4
-  var numVertexPart = 4
+  var numEPart = 4
+  var numVPart = 4
 
   /**
    * Create a cached in memory copy of the graph.
@@ -144,25 +144,25 @@ class Graph[VD: Manifest, ED: Manifest](
     scatter: (Vid, Edge[VD, ED]) => Status,
     niter: Int,
     gatherEdges: EdgeDirection.Value = EdgeDirection.In,
-    scatterEdges: EdgeDirection.Value = EdgeDirection.Out) = {
+    scatterEdges: EdgeDirection.Value = EdgeDirection.Out,
+    startActive: (Vertex[VD] => Status) = _ => true) = {
 
     ClosureCleaner.clean(gather)
     ClosureCleaner.clean(merge)
     ClosureCleaner.clean(apply)
     ClosureCleaner.clean(scatter)
 
-    val numEdgePartLocal = numEdgePart
-    val numVertexPartLocal = numVertexPart
+    val numEPartLocal = numEPart
+    val numVPartLocal = numVPart
 
-    val sc = edges.context
     // Partition the edges over machines.  The part_edges table has the format
     // ((pid, source), (target, data))
 
     var eTable = edges
       .map { case (source, target, data) =>
-        (math.abs(source) % numEdgePartLocal, (source, target, data))
+        (math.abs(source) % numEPartLocal, (source, target, data))
       }
-      .partitionBy(new HashPartitioner(numEdgePartLocal))
+      .partitionBy(new HashPartitioner(numEPartLocal))
       .mapPartitionsWithSplit({ (pid, iter) =>
         val edgeBlock = new EdgeBlockRecord[ED]()
         iter.foreach{ case (_, (srcId, dstId, data)) => edgeBlock.add(srcId, dstId, data) }
@@ -170,7 +170,7 @@ class Graph[VD: Manifest, ED: Manifest](
       }, preservesPartitioning = true).cache()
 
     // The master vertices are used during the apply phase
-    val vTablePartitioner = new HashPartitioner(numVertexPartLocal);
+    val vTablePartitioner = new HashPartitioner(numVPartLocal);
 
 
     val vid2pid : RDD[(Int, Seq[Pid])] = eTable.flatMap {
@@ -190,15 +190,18 @@ class Graph[VD: Manifest, ED: Manifest](
       }.groupByKey(vTablePartitioner)
 
 
-    var vTable = vertices.partitionBy(vTablePartitioner).leftOuterJoin(vid2pid).mapValues {
-        case (vdata, None) => (vdata, true, Array.empty[Pid])
-        case (vdata, Some(pids)) => (vdata, true, pids.toArray)
-      }.cache()
+    var vTable = vertices.partitionBy(vTablePartitioner).leftOuterJoin(vid2pid)
+      .mapPartitions( _.map {
+        case (vid, (vdata, None)) =>
+          (vid, (vdata, startActive(Vertex(vid,vdata,false)), Array.empty[Pid]))
+        case (vid, (vdata, Some(pids))) =>
+          (vid, (vdata, startActive(Vertex(vid,vdata,false)), pids.toArray))
+      }, preservesPartitioning = true).cache
 
 
     // Loop until convergence or there are no active vertices
     var iter = 0
-    val numActive = sc.accumulator(vTable.count.toInt)
+    val numActive = eTable.context.accumulator(vTable.filter(_._2._2).count.toInt)
     // var numActive = vTable.filter(_._2._2).count
 
     while (iter < niter && numActive.value > 0) {
@@ -251,11 +254,10 @@ class Graph[VD: Manifest, ED: Manifest](
       numActive.value = 0
 
       vTable = vTable.leftOuterJoin(scatterTable).mapPartitions( _.map {
-        case (vid, ((vdata, isActive, pids), isActiveOption)) => {
+        case (vid, ((vdata, isActive, pids), isActiveOption)) =>
           val newIsActive = isActiveOption.getOrElse(false)
           if(newIsActive) numActive +=1
           (vid, (vdata, newIsActive, pids))
-          }
         }, preservesPartitioning = true).cache()
 
       // Force the vtable to be computed and determine the number of active vertices
@@ -295,8 +297,8 @@ class Graph[VD: Manifest, ED: Manifest](
     ClosureCleaner.clean(merge)
     ClosureCleaner.clean(apply)
 
-    val numEdgePartLocal = numEdgePart
-    val numVertexPartLocal = numVertexPart
+    val numEPartLocal = numEPart
+    val numVPartLocal = numVPart
 
     val sc = edges.context
 
@@ -307,9 +309,9 @@ class Graph[VD: Manifest, ED: Manifest](
 
      var eTable = edges
       .map { case (source, target, data) =>
-        (math.abs(source) % numEdgePartLocal, (source, target, data))
+        (math.abs(source) % numEPartLocal, (source, target, data))
       }
-      .partitionBy(new HashPartitioner(numEdgePartLocal))
+      .partitionBy(new HashPartitioner(numEPartLocal))
       .mapPartitionsWithSplit({ (pid, iter) =>
         val edgeBlock = new EdgeBlockRecord[ED]()
         iter.foreach{ case (_, (srcId, dstId, data)) => edgeBlock.add(srcId, dstId, data) }
@@ -320,7 +322,7 @@ class Graph[VD: Manifest, ED: Manifest](
     println("Time: " + timer.tic)
 
     // The master vertices are used during the apply phase
-    val vTablePartitioner = new HashPartitioner(numVertexPartLocal)
+    val vTablePartitioner = new HashPartitioner(numVPartLocal)
 
 
     val vid2pid : RDD[(Int, Seq[Pid])] = eTable.flatMap {
@@ -453,7 +455,7 @@ object Graph {
         val tail = lineArray.drop(2)
         val edata = edgeParser(tail)
         (source.trim.toInt, target.trim.toInt, edata)
-      })
+      }).cache
 
     // Parse the vertex data table
     val vertices = edges.flatMap {

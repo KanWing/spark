@@ -3,6 +3,8 @@ package spark.graphlab
 import spark._
 import spark.SparkContext._
 import com.esotericsoftware.kryo._
+import breeze.linalg._
+
 
 
 class AnalyticsKryoRegistrator extends KryoRegistrator {
@@ -35,6 +37,9 @@ object Analytics {
 
     val edges = graph.edges
     val pageRankGraph = new Graph(vertices, edges)
+    pageRankGraph.numVPart = graph.numVPart
+    pageRankGraph.numEPart = graph.numEPart
+
     // Run PageRank
     pageRankGraph.iterateDynamic(
       (me_id, edge) => edge.source.data._2 / edge.source.data._1, // gather
@@ -62,6 +67,8 @@ object Analytics {
     }
     val edges = graph.edges //.map(v => None)
     val pageRankGraph = new Graph(vertices, edges)
+    pageRankGraph.numVPart = graph.numVPart
+    pageRankGraph.numEPart = graph.numEPart
     // Run PageRank
     pageRankGraph.iterateStatic(
       (me_id, edge) => edge.source.data._2 / edge.source.data._1, // gather
@@ -129,13 +136,10 @@ object Analytics {
 
 
 
- /**
-   * Compute the connected component membership of each vertex
-   * and return an RDD with the vertex value containing the
-   * lowest vertex id in the connected component containing
-   * that vertex.
+  /**
+   * Compute the shortest path to a set of markers
    */
-  def dynamicShortestPath[VD: ClassManifest, ED: ClassManifest](graph: Graph[VD, Float],
+   def dynamicShortestPath[VD: Manifest, ED: Manifest](graph: Graph[VD, Float],
     sources: List[Int], numIter: Int) = {
     val sourceSet = sources.toSet
     val vertices = graph.vertices.mapPartitions(
@@ -159,13 +163,10 @@ object Analytics {
   }
 
 
- /**
-   * Compute the connected component membership of each vertex
-   * and return an RDD with the vertex value containing the
-   * lowest vertex id in the connected component containing
-   * that vertex.
+  /**
+   * Compute the shortest path to a set of markers
    */
-  def shortestPath[VD: ClassManifest, ED: ClassManifest](graph: Graph[VD, Float],
+  def shortestPath[VD: Manifest, ED: Manifest](graph: Graph[VD, Float],
     sources: List[Int], numIter: Int) = {
     val sourceSet = sources.toSet
     val vertices = graph.vertices.mapPartitions(
@@ -188,6 +189,55 @@ object Analytics {
 
 
 
+  /**
+   *
+   */
+  def alternatingLeastSquares[VD: ClassManifest, ED: ClassManifest](graph: Graph[VD, Double],
+    latentK: Int, lambda: Double, numIter: Int) = {
+    val vertices = graph.vertices.mapPartitions( _.map {
+        case (vid, _) => (vid,  Array.fill(latentK){ scala.util.Random.nextDouble() } )
+        }).cache
+    val maxUser = graph.edges.map(_._1).reduce(math.max(_,_))
+    val edges = graph.edges // .mapValues(v => None)
+    val alsGraph = new Graph(vertices, edges)
+    alsGraph.numVPart = graph.numVPart
+    alsGraph.numEPart = graph.numEPart
+
+    val niterations = Int.MaxValue
+    alsGraph.iterateDynamic[(Array[Double], Array[Double])](
+      (me_id, edge) => { // gather
+        val X = edge.otherVertex(me_id).data
+        val y = edge.data
+        val Xy = X.map(_ * y)
+        val XtX = (for(i <- 0 until latentK; j <- i until latentK) yield(X(i) * X(j))).toArray
+        (Xy, XtX)
+      },
+      (a, b) =>
+        (a._1.zip(b._1).map{ case (q,r) => q+r }, a._2.zip(b._2).map{ case (q,r) => q+r }),
+      (Array.empty[Double], Array.empty[Double]), // default value is empty
+      (vertex, accum) => { // apply
+        val XyArray  = accum._1
+        val XtXArray = accum._2
+        if(XyArray.isEmpty) vertex.data // no neighbors
+        else {
+          val XtX = DenseMatrix.tabulate(latentK,latentK){ (i,j) =>
+            (if(i < j) XtXArray(i + (j+1)*j/2) else XtXArray(i + (j+1)*j/2)) +
+            (if(i == j) lambda else 1.0F) //regularization
+          }
+          val Xy = DenseMatrix.create(latentK,1,XyArray)
+          val w = XtX \ Xy
+          w.data
+        }
+      },
+      (me_id, edge) => true,
+      numIter,
+      gatherEdges = EdgeDirection.Both,
+      scatterEdges = EdgeDirection.Both,
+      vertex => vertex.id < maxUser).vertices
+  }
+
+
+
   def main(args: Array[String]) = {
     val host = args(0)
     val taskType = args(1)
@@ -203,6 +253,9 @@ object Analytics {
     //System.setProperty("spark.shuffle.compress", "false")
     System.setProperty("spark.kryo.registrator", "spark.graphlab.AnalyticsKryoRegistrator")
 
+
+
+
     taskType match {
       case "pagerank" => {
 
@@ -210,7 +263,7 @@ object Analytics {
         var isDynamic = true
         var tol:Float = 0.001F
         var outFname = ""
-        var numVPart = 512
+        var numVPart = 4
         var numEPart = 4
 
         options.foreach{
@@ -238,8 +291,8 @@ object Analytics {
 
         val sc = new SparkContext(host, "PageRank(" + fname + ")")
         val graph = Graph.textFile(sc, fname, a => 1.0F)
-        graph.numVertexPart = numVPart
-        graph.numEdgePart = numEPart
+        graph.numVPart = numVPart
+        graph.numEPart = numEPart
         val startTime = System.currentTimeMillis
         val pr = if(isDynamic) Analytics.dynamicPageRank(graph, tol, numIter)
           else  Analytics.pageRank(graph, numIter)
@@ -318,11 +371,62 @@ object Analytics {
         println(" \tSources:  [" + sources.mkString(", ") + "]")
         println("======================================")
 
-        val sc = new SparkContext(host, "ConnectedComponents(" + fname + ")")
+        val sc = new SparkContext(host, "ShortestPath(" + fname + ")")
         val graph = Graph.textFile(sc, fname, a => (if(a.isEmpty) 1.0F else a(0).toFloat ) )
         val cc = if(isDynamic) Analytics.dynamicShortestPath(graph, sources, numIter)
           else  Analytics.shortestPath(graph, sources, numIter)
         println("Longest Path: " + cc.map(_._2).reduce(math.max(_,_)))
+
+        sc.stop()
+      }
+
+
+      case "als" => {
+
+        var numIter = 5
+        var lambda = 0.01
+        var latentK = 10
+        var usersFname = "usersFactors.tsv"
+        var moviesFname = "moviesFname.tsv"
+        var numVPart = 4
+        var numEPart = 4
+
+        options.foreach{
+          case ("numIter", v) => numIter = v.toInt
+          case ("lambda", v) => lambda = v.toDouble
+          case ("latentK", v) => latentK = v.toInt
+          case ("usersFname", v) => usersFname = v
+          case ("moviesFname", v) => moviesFname = v
+          case ("numVPart", v) => numVPart = v.toInt
+          case ("numEPart", v) => numEPart = v.toInt
+          case (opt, _) => throw new IllegalArgumentException("Invalid option: " + opt)
+        }
+
+        println("======================================")
+        println("|       Alternating Least Squares    |")
+        println("--------------------------------------")
+        println(" Using parameters:")
+        println(" \tNumIter:     " + numIter)
+        println(" \tLambda:      " + lambda)
+        println(" \tLatentK:     " + latentK)
+        println(" \tusersFname:  " + usersFname)
+        println(" \tmoviesFname: " + moviesFname)
+        println("======================================")
+
+        val sc = new SparkContext(host, "ALS(" + fname + ")")
+        val graph = Graph.textFile(sc, fname, a => a(0).toDouble )
+        graph.numVPart = numVPart
+        graph.numEPart = numEPart
+
+        val maxUser = graph.edges.map(_._1).reduce(math.max(_,_))
+        val minMovie = graph.edges.map(_._2).reduce(math.min(_,_))
+        assert(maxUser < minMovie)
+
+        val factors = Analytics.alternatingLeastSquares(graph, latentK, lambda, numIter).cache
+        factors.filter(_._1 <= maxUser).map(r => r._1 + "\t" + r._2.mkString("\t"))
+          .saveAsTextFile(usersFname)
+        factors.filter(_._1 >= minMovie).map(r => r._1 + "\t" + r._2.mkString("\t"))
+          .saveAsTextFile(moviesFname)
 
         sc.stop()
       }
