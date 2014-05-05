@@ -77,7 +77,9 @@ object SynthBenchmark {
     graph.cache
 
     var startTime = System.currentTimeMillis()
-    graph.edges.count()
+    val numEdges = graph.edges.count()
+    println(s"Num Vertices: $numVertices")
+    println(s"Num Edges: $numEdges}")
     val loadTime = System.currentTimeMillis() - startTime
 
     // Collect the degree distribution (if desired)
@@ -105,7 +107,8 @@ object SynthBenchmark {
     val runTime = System.currentTimeMillis() - startTime
 
     sc.stop
-
+    println(s"Num Vertices: $numVertices")
+    println(s"Num Edges: $numEdges}")
     println(s"Load time: ${loadTime/1000.0} seconds")
     println(s"Run time:  ${runTime/1000.0} seconds")
 
