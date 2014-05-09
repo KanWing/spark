@@ -101,7 +101,7 @@ object SynthBenchmark {
       println(s"Total pagerank = $totalPR")
     } else if (app == "cc") {
       println("Connected Components")
-      val maxCC = graph.staticPageRank(niter).vertices.map(v => v._2).max
+      val maxCC = graph.staticPageRank(niter).vertices.map(v => v._2).reduce((a,b) => math.max(a,b))
       println(s"Max CC = $maxCC")
     }
     val runTime = System.currentTimeMillis() - startTime
