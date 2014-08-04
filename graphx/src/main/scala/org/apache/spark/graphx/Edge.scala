@@ -33,6 +33,10 @@ case class Edge[@specialized(Char, Int, Boolean, Byte, Long, Float, Double) ED] 
     var attr: ED = null.asInstanceOf[ED])
   extends Serializable {
 
+  var localSrcId: Int = -1
+
+  var localDstId: Int = -1
+
   /**
    * Given one vertex in the edge return the other vertex.
    *

@@ -45,6 +45,8 @@ class EdgePartition[
     @specialized(Char, Int, Boolean, Byte, Long, Float, Double) ED: ClassTag, VD: ClassTag](
     val srcIds: Array[VertexId] = null,
     val dstIds: Array[VertexId] = null,
+    val localSrcIds: Array[Int] = null,
+    val localDstIds: Array[Int] = null,
     val data: Array[ED] = null,
     val index: GraphXPrimitiveKeyOpenHashMap[VertexId, Int] = null,
     val vertices: VertexPartition[VD] = null,
@@ -53,7 +55,7 @@ class EdgePartition[
 
   /** Return a new `EdgePartition` with the specified edge data. */
   def withData[ED2: ClassTag](data_ : Array[ED2]): EdgePartition[ED2, VD] = {
-    new EdgePartition(srcIds, dstIds, data_, index, vertices, activeSet)
+    new EdgePartition(srcIds, dstIds, localSrcIds, localDstIds, data_, index, vertices, activeSet)
   }
 
   /**
@@ -63,19 +65,19 @@ class EdgePartition[
    */
   def withVertices[VD2: ClassTag](
       vertices_ : VertexPartition[VD2]): EdgePartition[ED, VD2] = {
-    new EdgePartition(srcIds, dstIds, data, index, vertices_, activeSet)
+    new EdgePartition(srcIds, dstIds, localSrcIds, localDstIds, data, index, vertices_, activeSet)
   }
 
   /** Return a new `EdgePartition` with the specified active set, provided as an iterator. */
   def withActiveSet(iter: Iterator[VertexId]): EdgePartition[ED, VD] = {
     val newActiveSet = new VertexSet
     iter.foreach(newActiveSet.add(_))
-    new EdgePartition(srcIds, dstIds, data, index, vertices, Some(newActiveSet))
+    new EdgePartition(srcIds, dstIds, localSrcIds, localDstIds, data, index, vertices, Some(newActiveSet))
   }
 
   /** Return a new `EdgePartition` with the specified active set. */
   def withActiveSet(activeSet_ : Option[VertexSet]): EdgePartition[ED, VD] = {
-    new EdgePartition(srcIds, dstIds, data, index, vertices, activeSet_)
+    new EdgePartition(srcIds, dstIds, localSrcIds, localDstIds, data, index, vertices, activeSet_)
   }
 
   /** Return a new `EdgePartition` with updates to vertex attributes specified in `iter`. */
@@ -124,6 +126,8 @@ class EdgePartition[
     while (i < size) {
       edge.srcId  = srcIds(i)
       edge.dstId  = dstIds(i)
+      edge.localSrcId = localSrcIds(i)
+      edge.localDstId = localDstIds(i)
       edge.attr = data(i)
       newData(i) = f(edge)
       i += 1
@@ -273,6 +277,8 @@ class EdgePartition[
     override def next(): Edge[ED] = {
       edge.srcId = srcIds(pos)
       edge.dstId = dstIds(pos)
+      edge.localSrcId = localSrcIds(pos)
+      edge.localDstId = localDstIds(pos)
       edge.attr = data(pos)
       pos += 1
       edge
@@ -331,6 +337,8 @@ class EdgePartition[
       assert(srcIds(pos) == srcId)
       edge.srcId = srcIds(pos)
       edge.dstId = dstIds(pos)
+      edge.localSrcId = localSrcIds(pos)
+      edge.localDstId = localDstIds(pos)
       edge.attr = data(pos)
       pos += 1
       edge
