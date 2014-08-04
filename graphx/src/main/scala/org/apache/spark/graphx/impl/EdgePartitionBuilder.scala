@@ -67,6 +67,15 @@ class EdgePartitionBuilder[@specialized(Long, Int, Double) ED: ClassTag, VD: Cla
     val vertices = new VertexPartition(
       vertexIds, new Array[VD](vertexIds.capacity), vertexIds.getBitSet)
 
-    new EdgePartition(srcIds, dstIds, data, index, vertices)
+    val localSrcIds = new Array[Int](edgeArray.size)
+    val localDstIds = new Array[Int](edgeArray.size)
+    var i = 0
+    while (i < edgeArray.size) {
+      localSrcIds(i) = vertices.index.getPos(srcIds(i))
+      localDstIds(i) = vertices.index.getPos(dstIds(i))
+      i += 1
+    }
+
+    new EdgePartition(srcIds, dstIds, localSrcIds, localDstIds, data, index, vertices)
   }
 }
