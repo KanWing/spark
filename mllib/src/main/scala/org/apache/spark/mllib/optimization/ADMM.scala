@@ -248,7 +248,7 @@ class SGDLocalOptimizer(val subProblemId: Int,
 
   def dualUpdate(rate: Double) {
     // Do the dual update
-    dualVar += (primalVar - primalConsensus) * rate
+    dualVar = (dualVar + (primalVar - primalConsensus) * rate)
   }
 
   def primalUpdate(remainingTimeMS: Long = Long.MaxValue) {
@@ -310,7 +310,8 @@ class SGDLocalOptimizer(val subProblemId: Int,
       // Set the learning rate
       val eta_t = params.eta_0 / (t.toDouble + 1.0)
       // Do the gradient update
-      axpy(-eta_t, grad, primalVar)
+      // axpy(-eta_t, grad, primalVar)
+      primalVar = (primalVar - grad * eta_t)
       // Compute residual.
       residual = eta_t * norm(grad, 2.0)
       // Update the current time every 1000 iterations

@@ -63,7 +63,9 @@ class WorkerCommunication(val address: String, val hack: WorkerCommunicationHack
     case d: InternalMessages.VectorUpdateMessage => {
       // DESERIALIZE BYTES USING KRYO
       //inputQueue.add(kryoPool.fromBytes(d.bytes, classOf[InternalMessages.VectorUpdateMessage]))
-      inputQueue.add(d)
+      inputQueue.add(new InternalMessages.VectorUpdateMessage(d.sender, d.primalVarAr.clone, 
+        d.dualVarAr.clone,
+        d.nExamples))
     }
     case _ => println("hello, world!")
   }
@@ -105,7 +107,8 @@ class WorkerCommunication(val address: String, val hack: WorkerCommunicationHack
   def broadcastDeltaUpdate(primalVar: BV[Double], dualVar: BV[Double], nExamples: Int) {
     // SERIALIZE/PACK BYTES USING KRYO
     //val msg = new InternalMessages.VectorUpdateMessage(kryoPool.toBytesWithoutClass(new InternalMessages.VectorUpdateMessage(selfID, primalVar, dualVar, nExamples)))
-    val msg = new InternalMessages.VectorUpdateMessage(selfID, primalVar.toArray, dualVar.toArray, nExamples)
+    val msg = new InternalMessages.VectorUpdateMessage(selfID, primalVar.toArray.clone, 
+      dualVar.toArray.clone, nExamples)
     for(other <- others.values) {
       other ! msg
     }
