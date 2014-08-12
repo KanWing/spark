@@ -25,7 +25,7 @@ GLOBAL_ADMMrho = 1.0
 GLOBAL_ADMMlagrangianRho = 0.1
 
 GLOBAL_ADMM_maxLocalIterations = 100000
-GLOBAL_ADMM_localEpsilon = 1.0e-5
+GLOBAL_ADMM_localEpsilon = 1.0e-3
 GLOBAL_ADMM_localTimeout = 100000000
 
 GLOBAL_MiniBatchADMM_maxLocalIterations = 100000000
@@ -197,14 +197,17 @@ results = []
 #ALGORITHMS = ["ADMM", "MiniBatchADMM", "AsyncADMM", "HOGWILD", "PORKCHOP", "GD"]#, "HOGWILD", "GD", "PORKCHOP"]
 
 
-
+expId = 0
 for dataset in ["wikipedia"]:
     for regType in ["L2"]: #, "L1"]:
-        for regParam in [0, 0.1, 1]: #10, 100]:
-            for runtime in RUNTIMES:
-                for algorithm in ALGORITHMS:
+        for regParam in [0, 1, 10]: # , 0.1, 0]: #10, 100]:
+            for runtime in [10000]:
+                for algorithm in ["HOGWILD", "PORKCHOP"]: #ALGORITHMS:
+                    print "Experiment: ", expId
+                    expId += 1
                     broadcastDelay = -1
                     localEpsilon = GLOBAL_ADMMlocalEpsilon
+                    localTimeout = GLOBAL_ADMM_localTimeout
                     miscStr = "" # " --useLineSearch true --miniBatchSize 10000000"
                     if algorithm == "ADMM":
                         maxLocalIterations = GLOBAL_ADMM_maxLocalIterations

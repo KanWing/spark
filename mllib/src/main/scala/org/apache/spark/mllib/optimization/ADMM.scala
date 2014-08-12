@@ -338,6 +338,7 @@ class ADMMParams extends Serializable {
 
 @DeveloperApi
 class SGDLocalOptimizer(val subProblemId: Int,
+                        val nSubProblems: Int,
                         val data: Array[(Double, BV[Double])],
                         val objFun: ObjectiveFunction,
                         val params: ADMMParams) extends Serializable with Logging {
@@ -392,6 +393,7 @@ class SGDLocalOptimizer(val subProblemId: Int,
     assert(miniBatchSize <= data.size)
     var timeOut = false
     val rhoScaled = rho 
+    val scaledRegParam = params.regParam / nSubProblems.toDouble
     residual = Double.MaxValue
     t = 0
     while(t < params.maxWorkerIterations && 
@@ -406,6 +408,8 @@ class SGDLocalOptimizer(val subProblemId: Int,
       }
       // Normalize the gradient to the batch size
       grad /= miniBatchSize.toDouble
+      // Add the SGD L2 update
+      grad += primalVar * scaledRegParam
       // Add the lagrangian
       grad += dualVar
       // Add the augmenting term
@@ -436,15 +440,15 @@ class ADMM(val params: ADMMParams, var gradient: ObjectiveFunction, var consensu
   var solvers: RDD[SGDLocalOptimizer] = null
   var stats: WorkerStats = null
   var totalTimeMs: Long = -1
-
   def setup(rawData: RDD[(Double, Vector)], initialWeights: Vector) {
     val primal0 = initialWeights.toBreeze
+    var nSubProblems = rawData.partitions.length
     solvers =
       rawData.mapPartitionsWithIndex { (ind, iter) =>
         val data: Array[(Double, BV[Double])] = iter.map {
           case (label, features) => (label, features.toBreeze)
         }.toArray
-        val solver = new SGDLocalOptimizer(ind, data, gradient, params)
+        val solver = new SGDLocalOptimizer(ind, nSubProblems, data, gradient, params)
         // Initialize the primal variable and primal consensus
         solver.primalVar = primal0.copy
         solver.primalConsensus = primal0.copy
@@ -512,9 +516,10 @@ class ADMM(val params: ADMMParams, var gradient: ObjectiveFunction, var consensu
       }.reduce( _ + _ )
 
       // Recompute the consensus variable
-      val primalConsensusOld = primalConsensus.copy
-      primalConsensus = consensus(stats.primalAvg, stats.dualAvg, stats.nWorkers, rho,
-        params.regParam)
+      // val primalConsensusOld = primalConsensus.copy
+      // primalConsensus = consensus(stats.primalAvg, stats.dualAvg, stats.nWorkers, rho,
+      //   params.regParam)
+      primalConsensus = stats.primalAvg
 
       // // Compute the residuals
       // primalResidual = solvers.map(
