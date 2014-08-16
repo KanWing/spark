@@ -39,7 +39,7 @@ import org.apache.spark.mllib.optimization.NNLS
  * of the elements within this block, and the list of destination blocks that each user or
  * product will need to send its feature vector to.
  */
-private[recommendation] case class OutLinkBlock(elementIds: Array[Int], shouldSend: Array[BitSet])
+case class OutLinkBlock(elementIds: Array[Int], shouldSend: Array[BitSet])
 
 
 /**
@@ -52,7 +52,7 @@ private[recommendation] case class OutLinkBlock(elementIds: Array[Int], shouldSe
  * block), as well as the corresponding rating for each one. We can thus use this information when
  * we get product block b's message to update the corresponding users.
  */
-private[recommendation] case class InLinkBlock(
+case class InLinkBlock(
   elementIds: Array[Int], ratingsForBlock: Array[Array[(Array[Int], Array[Double])]])
 
 
@@ -92,15 +92,15 @@ case class Rating(user: Int, product: Int, rating: Double)
  * indicated user
  * preferences rather than explicit ratings given to items.
  */
-class ALS private (
-    private var numUserBlocks: Int,
-    private var numProductBlocks: Int,
-    private var rank: Int,
-    private var iterations: Int,
-    private var lambda: Double,
-    private var implicitPrefs: Boolean,
-    private var alpha: Double,
-    private var seed: Long = System.nanoTime()
+class ALS (
+  var numUserBlocks: Int,
+  var numProductBlocks: Int,
+  var rank: Int,
+  var iterations: Int,
+  var lambda: Double,
+  var implicitPrefs: Boolean,
+  var alpha: Double,
+  var seed: Long = System.nanoTime()
   ) extends Serializable with Logging {
 
   /**
@@ -176,7 +176,7 @@ class ALS private (
   }
 
   /** If true, do alternating nonnegative least squares. */
-  private var nonnegative = false
+  var nonnegative = false
 
   /**
    * Set whether the least-squares problems solved at each iteration should have
@@ -186,6 +186,11 @@ class ALS private (
     this.nonnegative = b
     this
   }
+
+
+  var users: RDD[(Int, Array[Array[Double]])] = null
+
+  var products: RDD[(Int, Array[Array[Double]])] = null
 
   /**
    * Run ALS with the configured parameters on an input RDD of (user, product, rating) triples.
@@ -230,16 +235,22 @@ class ALS private (
     val seedGen = new Random(seed)
     val seed1 = seedGen.nextInt()
     val seed2 = seedGen.nextInt()
-    var users = userOutLinks.mapPartitionsWithIndex { (index, itr) =>
-      val rand = new Random(byteswap32(seed1 ^ index))
-      itr.map { case (x, y) =>
-        (x, y.elementIds.map(_ => randomFactor(rank, rand)))
+
+    if (users == null) {
+      users = userOutLinks.mapPartitionsWithIndex { (index, itr) =>
+        val rand = new Random(byteswap32(seed1 ^ index))
+        itr.map { case (x, y) =>
+          (x, y.elementIds.map(_ => randomFactor(rank, rand)))
+        }
       }
     }
-    var products = productOutLinks.mapPartitionsWithIndex { (index, itr) =>
-      val rand = new Random(byteswap32(seed2 ^ index))
-      itr.map { case (x, y) =>
-        (x, y.elementIds.map(_ => randomFactor(rank, rand)))
+
+    if (products == null) {
+      products = productOutLinks.mapPartitionsWithIndex { (index, itr) =>
+        val rand = new Random(byteswap32(seed2 ^ index))
+        itr.map { case (x, y) =>
+          (x, y.elementIds.map(_ => randomFactor(rank, rand)))
+        }
       }
     }
 
@@ -291,7 +302,6 @@ class ALS private (
     usersOut.count()
     productsOut.count()
 
-    products.unpersist()
 
     // Clean up.
     userInLinks.unpersist()
@@ -309,7 +319,7 @@ class ALS private (
    * @param factors the (block-distributed) user or product factor vectors
    * @return YtY - whose value is only used in the implicit preference model
    */
-  private def computeYtY(factors: RDD[(Int, Array[Array[Double]])]) = {
+  def computeYtY(factors: RDD[(Int, Array[Array[Double]])]) = {
     val n = rank * (rank + 1) / 2
     val LYtY = factors.values.aggregate(new DoubleMatrix(n))( seqOp = (L, Y) => {
       Y.foreach(y => dspr(1.0, wrapDoubleArray(y), L))
@@ -327,7 +337,7 @@ class ALS private (
    *
    * @param L the lower triangular part of the matrix packed in an array (row major)
    */
-  private def dspr(alpha: Double, x: DoubleMatrix, L: DoubleMatrix) = {
+  def dspr(alpha: Double, x: DoubleMatrix, L: DoubleMatrix) = {
     val n = x.length
     var i = 0
     var j = 0
@@ -352,14 +362,14 @@ class ALS private (
    * This is a temporary fix for jblas 1.2.3; it should be safe to move back to the
    * DoubleMatrix(double[]) constructor come jblas 1.2.4.
    */
-  private def wrapDoubleArray(v: Array[Double]): DoubleMatrix = {
+  def wrapDoubleArray(v: Array[Double]): DoubleMatrix = {
     new DoubleMatrix(v.length, 1, v: _*)
   }
 
   /**
    * Flatten out blocked user or product factors into an RDD of (id, factor vector) pairs
    */
-  private def unblockFactors(
+  def unblockFactors(
       blockedFactors: RDD[(Int, Array[Array[Double]])],
       outLinks: RDD[(Int, OutLinkBlock)]): RDD[(Int, Array[Double])] = {
     blockedFactors.join(outLinks).flatMap { case (b, (factors, outLinkBlock)) =>
@@ -371,7 +381,7 @@ class ALS private (
    * Make the out-links table for a block of the users (or products) dataset given the list of
    * (user, product, rating) values for the users in that block (or the opposite for products).
    */
-  private def makeOutLinkBlock(numProductBlocks: Int, ratings: Array[Rating],
+  def makeOutLinkBlock(numProductBlocks: Int, ratings: Array[Rating],
       productPartitioner: Partitioner): OutLinkBlock = {
     val userIds = ratings.map(_.user).distinct.sorted
     val numUsers = userIds.length
@@ -387,7 +397,7 @@ class ALS private (
    * Make the in-links table for a block of the users (or products) dataset given a list of
    * (user, product, rating) values for the users in that block (or the opposite for products).
    */
-  private def makeInLinkBlock(numProductBlocks: Int, ratings: Array[Rating],
+  def makeInLinkBlock(numProductBlocks: Int, ratings: Array[Rating],
       productPartitioner: Partitioner): InLinkBlock = {
     val userIds = ratings.map(_.user).distinct.sorted
     val userIdToPos = userIds.zipWithIndex.toMap
@@ -419,7 +429,7 @@ class ALS private (
    * the users (or (blockId, (p, u, r)) for the products). We create these simultaneously to avoid
    * having to shuffle the (blockId, (u, p, r)) RDD twice, or to cache it.
    */
-  private def makeLinkRDDs(
+  def makeLinkRDDs(
       numUserBlocks: Int,
       numProductBlocks: Int,
       ratingsByUserBlock: RDD[(Int, Rating)],
@@ -441,7 +451,7 @@ class ALS private (
   /**
    * Make a random factor vector with the given random.
    */
-  private def randomFactor(rank: Int, rand: Random): Array[Double] = {
+  def randomFactor(rank: Int, rand: Random): Array[Double] = {
     // Choose a unit vector uniformly at random from the unit sphere, but from the
     // "first quadrant" where all elements are nonnegative. This can be done by choosing
     // elements distributed as Normal(0,1) and taking the absolute value, and then normalizing.
@@ -459,7 +469,7 @@ class ALS private (
    * by destination and joins them with the in-link info to figure out how to update each user.
    * It returns an RDD of new feature vectors for each user block.
    */
-  private def updateFeatures(
+  def updateFeatures(
       numUserBlocks: Int,
       products: RDD[(Int, Array[Array[Double]])],
       productOutLinks: RDD[(Int, OutLinkBlock)],
@@ -488,7 +498,7 @@ class ALS private (
    * Compute the new feature vectors for a block of the users matrix given the list of factors
    * it received from each product and its InLinkBlock.
    */
-  private def updateBlock(messages: Iterable[(Int, Array[Array[Double]])], inLinkBlock: InLinkBlock,
+  def updateBlock(messages: Iterable[(Int, Array[Array[Double]])], inLinkBlock: InLinkBlock,
       rank: Int, lambda: Double, alpha: Double, YtY: Option[Broadcast[DoubleMatrix]])
     : Array[Array[Double]] =
   {
@@ -587,7 +597,7 @@ class ALS private (
    * Given a triangular matrix in the order of fillXtX above, compute the full symmetric square
    * matrix that it represents, storing it into destMatrix.
    */
-  private def fillFullMatrix(triangularMatrix: DoubleMatrix, destMatrix: DoubleMatrix) {
+  def fillFullMatrix(triangularMatrix: DoubleMatrix, destMatrix: DoubleMatrix) {
     val rank = destMatrix.rows
     var i = 0
     var pos = 0
@@ -607,7 +617,7 @@ class ALS private (
 /**
  * Partitioner for ALS.
  */
-private[recommendation] class ALSPartitioner(override val numPartitions: Int) extends Partitioner {
+class ALSPartitioner(override val numPartitions: Int) extends Partitioner {
   override def getPartition(key: Any): Int = {
     Utils.nonNegativeMod(byteswap32(key.asInstanceOf[Int]), numPartitions)
   }
