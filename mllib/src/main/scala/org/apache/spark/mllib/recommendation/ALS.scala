@@ -188,15 +188,15 @@ class ALS (
   }
 
 
-  var users: RDD[(Int, Array[Array[Double]])] = null
 
-  var products: RDD[(Int, Array[Array[Double]])] = null
+
+  var skipProducts = false
 
   /**
    * Run ALS with the configured parameters on an input RDD of (user, product, rating) triples.
    * Returns a MatrixFactorizationModel with feature vectors for each user and product.
    */
-  def run(ratings: RDD[Rating]): MatrixFactorizationModel = {
+  def run(ratings: RDD[Rating], productsInit: RDD[(Int,Array[Double])] = null): MatrixFactorizationModel = {
     val sc = ratings.context
 
     val numUserBlocks = if (this.numUserBlocks == -1) {
@@ -236,23 +236,34 @@ class ALS (
     val seed1 = seedGen.nextInt()
     val seed2 = seedGen.nextInt()
 
-    if (users == null) {
-      users = userOutLinks.mapPartitionsWithIndex { (index, itr) =>
-        val rand = new Random(byteswap32(seed1 ^ index))
-        itr.map { case (x, y) =>
-          (x, y.elementIds.map(_ => randomFactor(rank, rand)))
-        }
+    
+    var users = userOutLinks.mapPartitionsWithIndex { (index, itr) =>
+      val rand = new Random(byteswap32(seed1 ^ index))
+      itr.map { case (x, y) =>
+        (x, y.elementIds.map(_ => randomFactor(rank, rand)))
       }
     }
 
-    if (products == null) {
-      products = productOutLinks.mapPartitionsWithIndex { (index, itr) =>
+
+
+    var products = if(productsInit != null) {
+      val productsMap = productsInit.collect().toMap
+      val bcastMap = sc.broadcast(productsMap)
+      productOutLinks.mapPartitionsWithIndex { (index, itr) =>
+        val initFactorsMap = bcastMap.value
+        itr.map { case (x, y) =>
+          (x, y.elementIds.map(id => initFactorsMap(id)))
+        }
+      }
+    } else {
+      productOutLinks.mapPartitionsWithIndex { (index, itr) =>
         val rand = new Random(byteswap32(seed2 ^ index))
         itr.map { case (x, y) =>
           (x, y.elementIds.map(_ => randomFactor(rank, rand)))
         }
       }
     }
+
 
     if (implicitPrefs) {
       for (iter <- 1 to iterations) {
@@ -275,15 +286,24 @@ class ALS (
       }
     } else {
       for (iter <- 1 to iterations) {
+        // if (iter % 20 == 19) {
+        //   products.checkpoint()
+        //   users.checkpoint()
+        //   products.count
+        //   users.count
+        // }
         // perform ALS update
-        logInfo("Re-computing I given U (Iteration %d/%d)".format(iter, iterations))
-        products = updateFeatures(numProductBlocks, users, userOutLinks, productInLinks,
-          userPartitioner, rank, lambda, alpha, YtY = None)
-        products.setName(s"products-$iter")
         logInfo("Re-computing U given I (Iteration %d/%d)".format(iter, iterations))
         users = updateFeatures(numUserBlocks, products, productOutLinks, userInLinks,
           productPartitioner, rank, lambda, alpha, YtY = None)
         users.setName(s"users-$iter")
+        if (!skipProducts) {
+          logInfo("Re-computing I given U (Iteration %d/%d)".format(iter, iterations))
+          products = updateFeatures(numProductBlocks, users, userOutLinks, productInLinks,
+            userPartitioner, rank, lambda, alpha, YtY = None)
+          products.setName(s"products-$iter")
+        }
+
       }
     }
 

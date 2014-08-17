@@ -65,6 +65,20 @@ class MatrixFactorizationModel private[mllib] (
     }
   }
 
+  // def predict(usersProducts: RDD[(Int, Int)], defaultPrediction: Double): RDD[Rating] = {
+  //   usersProducts.leftOuterJoin(userFeatures).map {
+  //     case (user, (product, uFeaturesOpt)) => (product, (user, uFeaturesOpt))
+  //   }.leftOuterJoin(productFeatures).map {
+  //     case (product, ( (user, Some(uFeatures)), Some(pFeatures)) ) =>
+  //       val userVector = new DoubleMatrix(uFeatures)
+  //       val productVector = new DoubleMatrix(pFeatures)
+  //       Rating(user, product, userVector.dot(productVector))
+  //     case (product, ( (user, _), _ )) =>
+  //       Rating(user, product, defaultPrediction)
+  //   }
+  // }
+
+
   /**
    * :: DeveloperApi ::
    * Predict the rating of many users for many products.
