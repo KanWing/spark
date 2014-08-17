@@ -63,36 +63,49 @@ object MovieLensALS {
     val movieLensHomeDir = "hdfs://" + masterHostname + ":9000" 
     val trainingFile = movieLensHomeDir + "/data/ra.whole"
 
+    val specialThreshold = 200
     val data = sc.textFile(trainingFile).map { line => 
       val Array(user, movie, rating, time) = line.split("::")
-      (user.toInt, movie.toInt, rating.toDouble, (time.toInt % 10))
+      Rating(user.toInt, movie.toInt, rating.toDouble)
     }.repartition(128).cache
 
-    val trainCutoff = 5
-    val testCutoff = 8
+    val specialUsers = data.filter(r => r.user < specialThreshold)
+    val Array(specialTrainRaw, specialTestRaw) = specialUsers.randomSplit(Array(0.8, 0.2))
 
-    val training = data.filter( x => x._4 < trainCutoff ).cache
-    val nTraining = training.count
-    val biasTerm = training.map { x => x._3 }.reduce(_ + _) / nTraining.toDouble
+    println(s"nSpecialRaitings: ${specialUsers.count}")
 
-    //  val trainingUsers = training.map { x => x._1 }.collect.toSet
-    val trainingMovies = training.map { x => x._2 }.collect.toSet
+    println(s"Data Length ${data.count}")
 
-    val trainingMoviesBC = sc.broadcast(trainingMovies)
+    val Array(trainingExtendedRaw, testRaw) = data.filter(r => r.user >= specialThreshold)
+      .randomSplit(Array(0.95, 0.05))
+    val Array(trainingRaw, _) = trainingExtendedRaw.randomSplit(Array(0.8, 0.2))
+    
+    val trainingExtendedRaw2 = trainingExtendedRaw.union(specialTrainRaw)
+    val testRaw2 = testRaw.union(specialTestRaw)
 
-    val extendedTraining = data.filter{
-      case (user, movie, rating, time) => 
-        val validMovies = trainingMoviesBC.value
-        validMovies.contains(movie) && time < testCutoff
-    }
  
-    val test = data.filter{
-      case (user, movie, rating, time) => 
-        val validMovies = trainingMoviesBC.value
-        validMovies.contains(movie) && time >= testCutoff
-    }
+    val nTraining = trainingRaw.count
+    val biasTerm = trainingRaw.map { r => r.rating }.reduce(_ + _) / nTraining.toDouble
 
-    (biasTerm, toRatings(training, biasTerm), toRatings(extendedTraining, biasTerm), toRatings(test, biasTerm))
+    val training = trainingRaw.map { r => Rating(r.user, r.product, r.rating - biasTerm) }.cache
+    val trainingProducts = training.map { r => r.product }.collect.toSet
+    val trainingProductsBC = sc.broadcast(trainingProducts)
+
+    val trainingExtended = trainingExtendedRaw2.filter(r => trainingProductsBC.value.contains(r.product))
+      .map { r => Rating(r.user, r.product, r.rating - biasTerm) }.cache
+
+    val test = testRaw2.filter(r => trainingProductsBC.value.contains(r.product))
+      .map { r => Rating(r.user, r.product, r.rating - biasTerm) }.cache
+
+    val specialTest = specialTestRaw.filter(r => trainingProductsBC.value.contains(r.product))
+      .map { r => Rating(r.user, r.product, r.rating - biasTerm) }.cache
+
+    println(s"Training:    ${training.count}")
+    println(s"Training+:   ${trainingExtended.count}")
+    println(s"Test:        ${test.count}")
+
+
+    (biasTerm, training, trainingExtended, test, specialTest)
   }
 
 
@@ -115,7 +128,12 @@ object MovieLensALS {
     val conf = new SparkConf().setAppName("Movie Lens Experiment")
     val sc = new SparkContext(conf)
 
-    val (biasTerm, training, extendedTraining, test) = makeDatasets2(sc)
+    val (biasTerm, training, extendedTraining, test, specialTest) = makeDatasets(sc)
+    val nSpecialTest = specialTest.count
+
+    // val (biasTerm, training, extendedTraining, test) = makeDatasets2(sc)
+
+
 
     val nTrain = training.count
 
@@ -129,7 +147,7 @@ object MovieLensALS {
     println(s"Num training: $nTrain")
  
 
-    //val (bestModel, bestLambda, bestRMSE) = crossValidate(extendedTraining, test, rank, numIter) 
+    val (bestModel, bestLambda, bestRMSE) = crossValidate(extendedTraining, test, rank, numIter) 
 
 
     println("Training Base Model")
@@ -139,6 +157,8 @@ object MovieLensALS {
     println("Computing error on base model")
     val baselineError = computeRmse(modelBase, test, nTest)
     println(s"Baseline error: ${baselineError}")
+    val baselineError2 = computeRmse(modelBase, specialTest, nSpecialTest)
+    println(s"Special Test error: ${baselineError2}")
 
 
 
@@ -150,6 +170,9 @@ object MovieLensALS {
     val extendedError = computeRmse(model2, test, nTest)
     println(s"Extended error: ${extendedError}")
 
+    val extendedError2 = computeRmse(model2, specialTest, nSpecialTest)
+    println(s"Special Extended error: ${extendedError2}")
+
 
     val als3 = new ALS(-1, -1, rank, numIter, lambda,
       implicitPrefs = false, alpha = 0.0)
@@ -157,6 +180,9 @@ object MovieLensALS {
     // Measure the new ratings
     val batchError = computeRmse(model3, test, nTest)
     println(s"Extended Batch error: ${batchError}")
+
+    val batchError2 = computeRmse(model3, specialTest, nSpecialTest)
+    println(s"Special Extended Batch error: ${batchError2}")
 
 
     sc.stop()
@@ -206,7 +232,7 @@ object MovieLensALS {
 
   /** Compute RMSE (Root Mean Squared Error). */
   def computeRmse(model: MatrixFactorizationModel, data: RDD[Rating], n: Long) = {
-    val predictions: RDD[Rating] = model.predict(data.map(x => (x.user, x.product)))
+    val predictions: RDD[Rating] = model.predict(data.map(x => (x.user, x.product)), 0.0)
     val predictionsAndRatings = predictions.map(x => ((x.user, x.product), x.rating))
                                            .join(data.map(x => ((x.user, x.product), x.rating)))
                                            .values
