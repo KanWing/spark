@@ -23,6 +23,7 @@ import scala.math._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.graphx._
 
+
 /**
  * Computes the PageRank of URLs from an input file. Input file should
  * be in format of:
@@ -210,17 +211,10 @@ object DataflowPagerank extends Logging {
     var i = 0
     while (numUpdates > 0) {
 
-      val outMsgs = ccs.join(outEdges, partitioner).map { case (vid, (cc, dstId)) => (dstId, cc) }
-        .reduceByKey(partitioner, (a,b) => min(a,b))
-
-      val inMsgs = ccs.join(inEdges, partitioner).map { case (vid, (cc, srcId)) => (srcId, cc) }
-        .reduceByKey(partitioner, (a,b) => min(a,b))
-
-      val newCCs = ccs.leftOuterJoin(outMsgs, partitioner).mapPartitions(
-        iter => iter.map { case (id, (oldCC, msg)) => (id, min(oldCC, msg.getOrElse(oldCC))) },
-        true).leftOuterJoin(inMsgs, partitioner).mapPartitions(
-        iter => iter.map { case (id, (oldCC, msg)) => (id, min(oldCC, msg.getOrElse(oldCC))) },
-        true).cache
+      val outMsgs = ccs.join(outEdges).map { case (vid, (cc, dstId)) => (dstId, cc) }
+      val inMsgs = ccs.join(inEdges).map { case (vid, (cc, srcId)) => (srcId, cc) }
+      val newCCs = ccs.union(outMsgs).union(inMsgs)
+        .reduceByKey(partitioner, (a,b) => min(a,b)).cache
 
       numUpdates = ccs.join(newCCs).filter { case (id, (oldCC, newCC)) => oldCC != newCC }
         .count()
