@@ -76,7 +76,7 @@ object CorrelationClustering {
       }.cache()
 
       // Send messages notifying neigbhors of values
-      g.mapReduceTriplets[Long](
+      val newValues = g.mapReduceTriplets[Long](
         triplet => {
           if (triplet.dstAttr > 0 && triplet.srcId > triplet.dstId) {
             Iterator((triplet.dstId, triplet.srcAttr))
@@ -86,7 +86,13 @@ object CorrelationClustering {
         },
         (a,b) => math.min(a,b),
         Some(changingVertices, EdgeDirection.Out))
-      )
+
+
+      // Assign the each vertex the new value
+      g = g.joinVertices(newValues) { (id, component, newValue) =>
+        math.min(component, newValue) // this seems wrong since they are already negative
+      }.cache()
+
     }
 
     g
