@@ -71,7 +71,7 @@ class Avg extends BasicEmersonOptimizer with Serializable with Logging {
     // Initialize the solvers
     val primal0 = initialWeights
     solvers = data.mapPartitionsWithIndex { (ind, iter) =>
-      val data: Array[(Double, BV[Double])] = iter.next()
+      val data: RandomAccessDataset = iter.next()
       val solver = new ADMMLocalOptimizer(ind, nSubProblems = nSubProblems,
         nData = nData.toInt, data, lossFunction, regularizationFunction,  params)
       // Initialize the primal variable and primal regularizer

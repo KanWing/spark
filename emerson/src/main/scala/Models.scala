@@ -7,7 +7,7 @@ import org.apache.spark.rdd.RDD
 abstract trait EmersonOptimizer extends Serializable {
   def initialize(params: EmersonParams,
                  lossFunction: LossFunction, regularizationFunction: Regularizer,
-                 initialWeights: BV[Double], rawData: RDD[Array[(Double, BV[Double])]])
+                 initialWeights: BV[Double], rawData: RDD[RandomAccessDataset])
   def optimize(): BV[Double]
 
   def statsMap(): Map[String, String]
@@ -19,7 +19,7 @@ abstract trait BasicEmersonOptimizer extends EmersonOptimizer {
   var lossFunction: LossFunction = null
   var regularizationFunction: Regularizer = null
   var initialWeights: BV[Double] = null
-  var data: RDD[Array[(Double, BV[Double])]] = null
+  var data: RDD[RandomAccessDataset] = null
   var nData: Int = 0
   var nSubProblems: Int = 0
   var nDim: Int = 0
@@ -28,7 +28,7 @@ abstract trait BasicEmersonOptimizer extends EmersonOptimizer {
 
   def initialize(params: EmersonParams,
                  lossFunction: LossFunction, regularizationFunction: Regularizer,
-                 initialWeights: BV[Double], data: RDD[Array[(Double, BV[Double])]]) {
+                 initialWeights: BV[Double], data: RDD[RandomAccessDataset]) {
     println(params)
 
     this.data = data
@@ -61,7 +61,7 @@ class EmersonModel(val params: EmersonParams,
 
   var weights: BV[Double] = null
 
-  def fit(params: EmersonParams, initialWeights: BV[Double], data: RDD[Array[(Double, BV[Double])]]): Unit = {
+  def fit(params: EmersonParams, initialWeights: BV[Double], data: RDD[RandomAccessDataset]): Unit = {
 
     val initStartTime = System.currentTimeMillis()
     optimizer.initialize(params, lossFunction, regularizationFunction, initialWeights, data)
@@ -73,16 +73,16 @@ class EmersonModel(val params: EmersonParams,
 
   }
 
-  def score(data: RDD[Array[(Double, BV[Double])]]): (Double, Double, Double, Double) = {
+  def score(data: RDD[RandomAccessDataset]): (Double, Double, Double, Double) = {
     assert(weights != null)
     val w = weights // make a local reference to prevent closure capture
     val (nData, totalError) = data.map { data =>
-      val totalError = data.view.map{
-        case (y, x) =>
+      val totalError: Double = data.foldLeft(0.0) {
+        case (sum, (y, x)) =>
           assert(y == 0.0 || y == 1.0)
           val error = if (lossFunction.predict(w, x) != y) { 1.0 } else { 0.0 }
-          error
-      }.sum
+          sum + error
+      }
       (data.length.toDouble, totalError)
     }.reduce( (a,b) => (a._1 + b._1, a._2 + b._2) )
 

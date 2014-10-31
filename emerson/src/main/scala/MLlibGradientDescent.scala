@@ -22,7 +22,7 @@ class MLlibGradientDescent extends BasicEmersonOptimizer with Serializable with 
 
   override def initialize(params: EmersonParams,
                  lossFunction: LossFunction, regularizationFunction: Regularizer,
-                 initialWeights: BV[Double], data: RDD[Array[(Double, BV[Double])]]) {
+                 initialWeights: BV[Double], data: RDD[RandomAccessDataset]) {
     println(params)
 
     this.data = data
@@ -30,8 +30,7 @@ class MLlibGradientDescent extends BasicEmersonOptimizer with Serializable with 
     this.lossFunction = lossFunction
     this.regularizationFunction = regularizationFunction
     this.initialWeights = initialWeights
-    this.data2 = data.flatMap(data => data.iterator.map { case (y, x) => LabeledPoint(y, Vectors.fromBreeze(x)) }).cache()
-    this.data2.foreach( f => () )
+    this.data2 = data.mapPartitions(iter => iter.next().iterator.map { case (y, x) => LabeledPoint(y, Vectors.fromBreeze(x)) })
 
     nDim = initialWeights.size
     nSubProblems = data.partitions.length

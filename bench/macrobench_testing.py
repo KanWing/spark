@@ -15,7 +15,7 @@ ALGORITHMS = ["HOGWILD", "MLlibGD", "ADMM", "PORKCHOP", "AVG"] #, "MiniBatchADMM
 
 PICKLED_OUTPUT = "experiment.pkl"
 
-DO_TEST_SHORT = False
+DO_TEST_SHORT = True
 DO_TEST_CLOUD_SKEW = False
 DO_TEST_CLOUD_DIM = False
 DO_TEST_DATASETS = True
@@ -31,12 +31,12 @@ TASKS = [("SVM", "L2"), ("LR", "L1"), ("SVM", "L1"), ("LR", "L2")]
 
 
 
-SHORT_ALGORITHMS = ["ADMM", "PORKCHOP"] #["AVG", "HOGWILD", "MLlibGD", "PORKCHOP", "ADMM"] #, "HOGWILD"] # "ADMM", "PORKCHOP"]#, "PORKCHOP", "HOGWILD"]#, "PORKCHOP"]#"PORKCHOP", "ADMM"]
+SHORT_ALGORITHMS = ["ADMM", "MLlibGD"] #["AVG", "HOGWILD", "MLlibGD", "PORKCHOP", "ADMM"] #, "HOGWILD"] # "ADMM", "PORKCHOP"]#, "PORKCHOP", "HOGWILD"]#, "PORKCHOP"]#"PORKCHOP", "ADMM"]
 
 
-SHORT_RUNTIMES = [20000] # [2*1000, 10*1000, 30*1000]
+SHORT_RUNTIMES = [60000] # [2*1000, 10*1000, 30*1000]
 SHORT_TASKS = [("SVM", "L2")]
-SHORT_DATASETS = ["wikipedia"]
+SHORT_DATASETS = ["splice_site.t"]
 
 
 
@@ -78,7 +78,9 @@ DATASET_REG_PARAM = {
 "bismarck" : 1e-1,
 "flights" : 1e-1,
 "dblp" : 1e-1,
-"wikipedia": 1e-1
+"wikipedia": 1e-1,
+"splice_site": 1e-1,
+"splice_site.t": 1e-1
 }
 
 # bismarck the paper does 1e-1
@@ -104,16 +106,23 @@ def describe_point_cloud(pointsPerPartition = 500000,
              "--pointCloudDimension " + str(dimension) + " " 
 
 def describe_forest():
-    return " --input /user/root/bismarck_data/forest* "
+    return " --input /user/root/bismarck_data/forest* --format bismark "
 
 def describe_flights(year):
-    return " --input /user/root/flights/"+str(year)+".csv"
+    return " --input /user/root/flights/"+str(year)+".csv --format flights"
 
 def describe_dblp():
-    return " --input /user/root/dblp/binarized-year-to-title.txt"
+    return " --input /user/root/dblp/binarized-year-to-title.txt --format dblp "
 
 def describe_wikipedia():
-    return " --input /user/root/wiki/en-wiki-8-7-2014-tokenized.txt"
+    return " --input /user/root/wiki/en-wiki-8-7-2014-tokenized.txt --format wikipedia "
+
+def describe_splice_site_t():
+    return " --input /user/root/splice_site.t --nfeatures 11725480 --format libsvm "
+
+def describe_splice_site():
+    return " --input /user/root/splice_site --nfeatures 11725480 --format libsvm "
+
 
 ## END OF DATASET FORMATTING
 
@@ -156,6 +165,10 @@ def runTest(runtimeMS,
         datasetConfigStr = describe_dblp()
     elif datasetName == "wikipedia":
         datasetConfigStr = describe_wikipedia()
+    elif datasetName == "splice_site.t":
+        datasetConfigStr = describe_splice_site_t()
+    elif datasetName == "splice_site":
+        datasetConfigStr = describe_splice_site()
     else:
         print "Unknown dataset!"
         raise
@@ -171,7 +184,6 @@ def runTest(runtimeMS,
           "--objective " + str(objectiveFn) + " " + \
           "--regType " + str(regType) + " " + \
           "--regParam " + str(regParam) + " " + \
-          "--format " + str(datasetName) + " " + \
           "--numPartitions " + str(numPartitions) + " " + \
           "--runtimeMS " + str(runtimeMS) + " " + \
           "--ADMMmaxLocalIterations " + str(ADMMmaxLocalIterations) + " " + \

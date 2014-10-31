@@ -9,7 +9,7 @@ import org.apache.spark.Logging
 class DualDecompLocalOptimizer(val subProblemId: Int,
                         val nSubProblems: Int,
                         val nData: Int,
-                        val data: Array[(Double, BV[Double])],
+                        val data: RandomAccessDataset,
                         val lossFunction: LossFunction,
                         val regularizer: Regularizer,
                         val params: EmersonParams,

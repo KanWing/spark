@@ -120,7 +120,7 @@ class WorkerCommunication(val address: String, val hack: WorkerCommunicationHack
 class AsyncADMMWorker(subProblemId: Int,
                       nSubProblems: Int,
                       nData: Int, 
-                      data: Array[(Double, BV[Double])],
+                      data: RandomAccessDataset,
                       lossFun: LossFunction,
                       regularizer: Regularizer,
                       params: EmersonParams,
@@ -387,7 +387,7 @@ class AsyncADMM extends BasicEmersonOptimizer with Serializable with Logging {
   override def initialize(params: EmersonParams,
                  lossFunction: LossFunction, regularizationFunction: Regularizer,
                  initialWeights: BV[Double],
-                 rawData: RDD[Array[(Double, BV[Double])]]): Unit = {
+                 rawData: RDD[RandomAccessDataset]): Unit = {
     // Preprocess the data
     super.initialize(params, lossFunction, regularizationFunction, initialWeights, rawData)
 
@@ -400,7 +400,7 @@ class AsyncADMM extends BasicEmersonOptimizer with Serializable with Logging {
           throw new RuntimeException("Worker was evicted, dying lol!")
         }
       } else {
-        val data: Array[(Double, BV[Double])] = iter.next()
+        val data: RandomAccessDataset = iter.next()
         val workerName = UUID.randomUUID().toString
         val address = Worker.HACKakkaHost + workerName
         val hack = new WorkerCommunicationHack()

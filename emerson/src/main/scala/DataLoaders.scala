@@ -5,14 +5,191 @@ import edu.berkeley.emerson.Emerson.Params
 import org.apache.spark.SparkContext
 import org.apache.spark.mllib.linalg.DenseVector
 import org.apache.spark.rdd.RDD
+import org.apache.spark.storage.StorageLevel
+import org.apache.spark.mllib.util.MLUtils
+import scala.collection.mutable.ArrayBuffer
 
 import scala.util.Random
 import scala.util.hashing.MurmurHash3
 
 
+object RandomAccessDataset {
+  def apply(entries: Array[(Double, BV[Double])]): RandomAccessDataset = {
+    new LegacyDataset(entries)
+  }
+  def apply(ndim: Int, labels: Array[Double], offsets: Array[Int], featureIds: Array[Int], 
+  featureValues: Array[Double]): RandomAccessDataset = {
+    new SparseDataset(ndim, labels, offsets, featureIds, featureValues)
+  }
+}
+
+abstract class RandomAccessDataset extends Serializable {
+  def apply(ind: Int): (Double, BV[Double])
+  def size(): Int
+  def length() = size()
+
+  def sumx(): BV[Double] = {
+    var accum = apply(0)._2.copy
+    var i = 1
+    while (i < size()) {
+      accum += apply(i)._2
+      i += 1
+    }
+    accum
+  }
+
+  def sumxx(): BV[Double] = {
+    var accum = apply(0)._2.copy
+    var i = 1
+    while (i < size()) {
+      accum *= apply(i)._2
+      i += 1
+    }
+    accum
+  }
+
+  def foldLeft[Z](zero: Z)(f: (Z, (Double, BV[Double]))  => Z): Z = {
+    var accum = zero
+    var i = 1
+    while (i < size()) {
+      accum = f(accum, apply(i))
+      i += 1
+    }
+    accum
+  }
+
+  def iterator(): Iterator[(Double, BV[Double])] = {
+    new Iterator[(Double, BV[Double])] {
+      var i = 0
+      override def hasNext() = i < size
+      override def next() = {
+        val ret = apply(i)
+        i += 1
+        ret
+      }
+    }
+  }
+
+  def normalize(xbar: BV[Double], stdev: BV[Double]): RandomAccessDataset = {
+    null
+  }
+}
+
+class LegacyDataset(entries: Array[(Double, BV[Double])]) extends RandomAccessDataset {
+  override def apply(ind: Int) = entries(ind)
+  override def size() = entries.size
+  override def normalize(xbar: BV[Double], stdev: BV[Double]): RandomAccessDataset = {
+    val newEntries = entries.map { case (y, x) =>
+      assert(x.size == stdev.size)
+      // x -= xbar
+      // x /= stdev
+      // x /= xmax
+
+      // ugly hack where I reuse the vector
+      var i = 0
+      while (i < x.size) {
+        if (stdev(i) == 0.0) {
+          x(i) = 1.0 // make a constant column
+        } else {
+          x(i) = (x(i) - xbar(i)) / stdev(i)
+        }
+        // x(i) /= xmax(i)
+        i += 1
+      }
+
+      (y, x)
+    }
+    RandomAccessDataset(newEntries)
+  }
+  
+}
+
+// class DenseDataset(labels: Array[Double], values: Array[Double]) extends RandomAccessDataset {
+//   override def apply(ind: Int) = entries(ind)
+// }
+
+
+class SparseDataset(ndim: Int, labels: Array[Double], offsets: Array[Int], featureIds: Array[Int], 
+  featureValues: Array[Double]) extends RandomAccessDataset {
+  override def apply(ind: Int) = {
+    val label = labels(ind)
+    val begin = offsets(ind)
+    val end = offsets(ind + 1)
+    val idx = featureIds.view(begin, end)
+    val xValues = featureValues.view(begin, end)
+    val x: BV[Double] = new BSV[Double](idx.toArray, xValues.toArray, ndim)
+    (label, x)
+  }
+  override def size() = labels.size
+}
+
+
 
 object DataLoaders {
-  def loadBismark(sc: SparkContext, filename: String, params: Params): RDD[Array[(Double, BV[Double])]] = {
+
+  def loadLibSVM(sc: SparkContext, filename: String, params: Params): RDD[RandomAccessDataset] = {
+    val partitioned = sc.textFile(params.input)
+      .map(_.trim)
+      .filter(line => !(line.isEmpty || line.startsWith("#")))
+      .coalesce(params.numPartitions)
+    val counters = partitioned.mapPartitions { iter =>
+      var features = 0L
+      var labels = 0
+      while (iter.hasNext) {
+        val line = iter.next
+        labels += 1
+        features += line.count(_ == ':')
+      }
+      assert(features < Int.MaxValue)
+      Iterator((labels, features.toInt))
+    }
+
+    val parsed = partitioned.zipPartitions(counters) { (iter, countersIter) =>
+      val (nLabels, nFeatures) = countersIter.next
+      val labels = new Array[Double](nLabels)
+      val offsets = new Array[Int](nLabels + 1)
+      val featureIds = new Array[Int](nFeatures)
+      val values = new Array[Double](nFeatures)
+
+      var labelsInd = 0
+      var featuresInd = 0
+      while (iter.hasNext) {
+        val line = iter.next
+        val items = line.split(' ')
+        val label = items.head.toFloat
+        labels(labelsInd) = label
+        offsets(labelsInd) = featuresInd
+        labelsInd += 1
+
+        var i = 1
+        while (i < items.size) {
+          if (items(i).nonEmpty) {
+            val indexAndValue = items(i).split(':')
+            // Convert 1-based indices to 0-based.
+            featureIds(featuresInd) = indexAndValue(0).toInt - 1
+            values(featuresInd) = indexAndValue(1).toDouble
+            featuresInd += 1
+          }
+          i += 1
+        }
+      }
+      offsets(labelsInd) = featuresInd
+      assert(labelsInd == (offsets.size - 1))
+      assert(featuresInd == featureIds.size)
+
+      Iterator((labels.toArray, offsets.toArray, featureIds.toArray, values.toArray))
+      }.cache()
+
+    val numDimensions = 
+      parsed.map { case (labels, offsets, featureIds, values) => featureIds.max + 1 }
+        .reduce((a,b) => math.max(a,b))
+   
+    parsed.map { case (labels, offsets, featureIds, values) =>
+      RandomAccessDataset(numDimensions, labels, offsets, featureIds, values) }
+    
+  }
+
+  def loadBismark(sc: SparkContext, filename: String, params: Params): RDD[RandomAccessDataset] = {
     val data = sc.textFile(filename, params.numPartitions)
       .filter(s => !s.isEmpty && s(0) == '{')
       .map(s => s.split('\t'))
@@ -22,7 +199,7 @@ object DataLoaders {
         val label = if (y.toDouble > 0) 1.0 else 0.0
         val xFeatures: BV[Double] = new BDV[Double](features)
         (label, xFeatures)
-    }.repartition(params.numPartitions).mapPartitions(iter => Iterator(iter.toArray)).cache()
+    }.repartition(params.numPartitions).mapPartitions(iter => Iterator(RandomAccessDataset(iter.toArray))).cache()
     data
   }
 
@@ -36,7 +213,7 @@ object DataLoaders {
     array
   }
 
-  def loadDBLP(sc: SparkContext, filename: String, params: Params): RDD[Array[(Double, BV[Double])]] = {
+  def loadDBLP(sc: SparkContext, filename: String, params: Params): RDD[RandomAccessDataset] = {
     println("loading data!")
     val rawData = sc.textFile(filename, params.numPartitions)
 
@@ -60,11 +237,10 @@ object DataLoaders {
       }
       val x: BV[Double] = new BDV[Double](features)
       (label, x)
-    }).repartition(params.numPartitions).mapPartitions(iter => Iterator(iter.toArray)).cache()
+    }).repartition(params.numPartitions).mapPartitions(iter => Iterator(RandomAccessDataset(iter.toArray))).cache()
   }
 
-  def loadWikipedia(sc: SparkContext, filename: String, params: Params):
-      RDD[Array[(Double, BV[Double])]] = {
+  def loadWikipedia(sc: SparkContext, filename: String, params: Params): RDD[RandomAccessDataset] = {
     println("loading data!")
     val rawData = sc.textFile(filename, params.numPartitions)
 
@@ -92,7 +268,7 @@ object DataLoaders {
       val label = if(labelFound) 1.0 else 0.0
       val x: BV[Double] = new BDV[Double](features)
       (label, x)
-    }).repartition(params.numPartitions).mapPartitions(iter => Iterator(iter.toArray)).cache()
+    }).repartition(params.numPartitions).mapPartitions(iter => Iterator(RandomAccessDataset(iter.toArray))).cache()
   }
 
   private def hrMinToScaledHr(s: String): Double = {
@@ -101,8 +277,7 @@ object DataLoaders {
     (((r-mins)/100*60)+mins)/60/24
   }
 
-  def loadFlights(sc: SparkContext, filename: String, params: Params):
-      RDD[Array[(Double, BV[Double])]] = {
+  def loadFlights(sc: SparkContext, filename: String, params: Params): RDD[RandomAccessDataset] = {
     val labels = Array("Year", "Month", "DayOfMonth", "DayOfWeek", "DepTime", "CRSDepTime", "ArrTime",
       "CRSArrTime", "UniqueCarrier", "FlightNum", "TailNum", "ActualElapsedTime", "CRSElapsedTime",
       "AirTime", "ArrDelay", "DepDelay", "Origin", "Dest", "Distance", "TaxiIn", "TaxiOut",
@@ -189,7 +364,7 @@ object DataLoaders {
 
         val x: BV[Double] = new BSV[Double](idx_arr, value_arr, bitvector_offset)
         (label, x)
-    }.repartition(params.numPartitions).mapPartitions(iter => Iterator(iter.toArray)).cache()
+    }.repartition(params.numPartitions).mapPartitions(iter => Iterator(RandomAccessDataset(iter.toArray))).cache()
 
     data.count()
     rawData.unpersist(true)
@@ -222,7 +397,7 @@ object DataLoaders {
                         cloudSize: Double,
                         partitionSkew: Double,
                         numPartitions: Int,
-                        pointsPerPartition: Int): RDD[Array[(Double, BV[Double])]] = {
+                        pointsPerPartition: Int): RDD[RandomAccessDataset] = {
     sc.parallelize(1 to numPartitions, numPartitions).map { idx =>
       val plusCloud = new DenseVector(Array.fill[Double](dim)(5.0))
       plusCloud.values(dim - 1) = 1
@@ -233,7 +408,7 @@ object DataLoaders {
       val random = new Random(idx)
       val isPartitionPlus = idx % 2 == 1
 
-      (0 until pointsPerPartition).iterator.map { pt =>
+      val array =  (0 until pointsPerPartition).iterator.map { pt =>
         val isPointPlus = if (random.nextDouble() < partitionSkew) isPartitionPlus else !isPartitionPlus
         val trueLabel: Double = if (isPointPlus) 1.0 else 0.0
 
@@ -250,6 +425,7 @@ object DataLoaders {
 
         (chosenLabel, chosenPoint)
       }.toArray
+      RandomAccessDataset(array)
     }
   }
 
@@ -278,7 +454,7 @@ object DataLoaders {
   }
 
 
-  def normalizeData(data: RDD[Array[(Double, BV[Double])]]): RDD[Array[(Double, BV[Double])]] = {
+  def normalizeData(data: RDD[RandomAccessDataset]): RDD[RandomAccessDataset] = {
     val nExamples = data.map { data => data.length }.reduce( _ + _ )
 
     // val xmax: BV[Double] = data.map {
@@ -291,11 +467,11 @@ object DataLoaders {
 
 
     val xbar: BV[Double] = data.map {
-      data => data.view.map { case (y, x) => x }.reduce(_ + _)
+      data => data.sumx()
     }.reduce(_ + _) / nExamples.toDouble
 
     val xxbar: BV[Double] = data.map {
-      data => data.view.map { case (y, x) => x :* x }.reduce(_ + _)
+      data => data.sumxx()
     }.reduce(_ + _) / nExamples.toDouble
 
     val variance: BDV[Double] = (xxbar - (xbar :* xbar)).toDenseVector
@@ -318,28 +494,7 @@ object DataLoaders {
     //   if (xmax(i) == 0.0) { xmax(i) = 1.0 }
     // }
 
-    val data2 = data.map { data =>
-      data.map { case (y, x) =>
-        assert(x.size == stdev.size)
-        // x -= xbar
-        // x /= stdev
-        // x /= xmax
-
-        // ugly hack where I reuse the vector
-        var i = 0
-        while (i < x.size) {
-          if (stdev(i) == 0.0) {
-            x(i) = 1.0 // make a constant column
-          } else {
-            x(i) = (x(i) - xbar(i)) / stdev(i)
-          }
-          // x(i) /= xmax(i)
-          i += 1
-        }
-
-        (y, x)
-      }
-    }.cache()
+    val data2 = data.map { data => data.normalize(xbar, stdev) }.cache()
     data2.foreach( x => () )
     data.unpersist()
     data2

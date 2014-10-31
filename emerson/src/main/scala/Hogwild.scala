@@ -105,7 +105,7 @@ class HWWorkerCommunication(val address: String, val hack: HWWorkerCommunication
 class HOGWILDSGDWorker(subProblemId: Int,
                        nSubProblems: Int,
                        nData: Int,
-                       data: Array[(Double, BV[Double])],
+                       data: RandomAccessDataset,
                        lossFun: LossFunction,
                        params: EmersonParams,
                        regularizer: Regularizer,
@@ -201,7 +201,7 @@ class HOGWILDSGD extends BasicEmersonOptimizer with Serializable with Logging {
   override def initialize(params: EmersonParams,
                           lossFunction: LossFunction, regularizationFunction: Regularizer,
                           initialWeights: BV[Double],
-                          rawData: RDD[Array[(Double, BV[Double])]]): Unit = {
+                          rawData: RDD[RandomAccessDataset]): Unit = {
     // Preprocess the data
     super.initialize(params, lossFunction, regularizationFunction, initialWeights, rawData)
 
@@ -215,7 +215,7 @@ class HOGWILDSGD extends BasicEmersonOptimizer with Serializable with Logging {
         }
       } else {
 
-      val data: Array[(Double, BV[Double])] = iter.next()
+      val data: RandomAccessDataset = iter.next()
       val workerName = UUID.randomUUID().toString
       val address = Worker.HACKakkaHost + workerName
       val hack = new HWWorkerCommunicationHack()

@@ -39,6 +39,7 @@ object Emerson {
     var input: String = null
     var format: String = "libsvm"
     var numPartitions: Int = -1
+    var nfeatures: Int = -1
     var algorithm: Algorithm = ADMM
     var objectiveFn: Objective = SVM
     var regType: RegType = L2
@@ -96,6 +97,11 @@ object Emerson {
       opt[Double]("stepSize")
         .text(s"initial step size, default: ${defaultParams.eta_0}")
         .action { (x, c) => c.eta_0 = x; c}
+
+      opt[Int]("nfeatures")
+        .text(s"the number of features to use in libSVM formatted files")
+        .action { (x, c) => c.nfeatures = x; c}
+
 
       opt[Boolean]("learningT")
         .action{ (x, c) => c.learningT = x; c }
@@ -235,11 +241,9 @@ object Emerson {
 
     println("Starting to load data...")
 
-    var training: RDD[Array[(Double, BV[Double])]] =
+    var training: RDD[RandomAccessDataset] =
       if (params.format == "lisbsvm") {
-        MLUtils.loadLibSVMFile(sc, params.input).map(
-          p => (p.label, p.features.toBreeze)
-        ).repartition(params.numPartitions).mapPartitions( iter => Iterator(iter.toArray) ).cache()
+        DataLoaders.loadLibSVM(sc, params.input, params)
       } else if (params.format == "bismarck") {
         DataLoaders.loadBismark(sc, params.input, params)
       } else if (params.format == "flights") {

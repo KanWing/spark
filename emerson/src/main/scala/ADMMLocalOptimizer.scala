@@ -13,7 +13,7 @@ import org.apache.spark.rdd.RDD
 class ADMMLocalOptimizer(val subProblemId: Int,
                         val nSubProblems: Int,
                         val nData: Int,
-                        val data: Array[(Double, BV[Double])],
+                        val data: RandomAccessDataset,
                         val lossFun: LossFunction,
                         val regularizer: Regularizer,
                         val params: EmersonParams) extends Serializable with Logging {
