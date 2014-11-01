@@ -8,7 +8,6 @@ import akka.actor._
 import akka.pattern.ask
 import akka.util.Timeout
 import breeze.linalg.{DenseVector => BDV, SparseVector => BSV, Vector => BV, _}
-import edu.berkeley.emerson.InternalMessages.VectorUpdateMessage
 import org.apache.spark.Logging
 import org.apache.spark.deploy.worker.Worker
 import org.apache.spark.rdd.RDD
@@ -18,17 +17,11 @@ import scala.concurrent.Await
 import scala.concurrent.duration._
 import scala.language.postfixOps
 
-//
-//case class AsyncSubProblem(data: Array[(Double, Vector)], comm: WorkerCommunication)
-
-// fuck actors
-class WorkerCommunicationHack {
-  var ref: WorkerCommunication = null
-}
 
 
 
-object InternalMessages {
+
+object ADMMMessages {
   case class WakeupMsg() extends Serializable 
   case class PingPong() extends Serializable
   case class VectorUpdateMessage(val sender: Int,
@@ -36,6 +29,10 @@ object InternalMessages {
 }
 
 
+// fuck actors
+class WorkerCommunicationHack {
+  var ref: WorkerCommunication = null
+}
 
 class WorkerCommunication(val address: String, val hack: WorkerCommunicationHack) extends Actor with Logging {
   hack.ref = this
@@ -47,14 +44,14 @@ class WorkerCommunication(val address: String, val hack: WorkerCommunicationHack
   var worker: AsyncADMMWorker = null
 
   def receive = {
-    case ppm: InternalMessages.PingPong => {
+    case ppm: ADMMMessages.PingPong => {
        println(s"$selfID : new message from $sender")
     }
-    case m: InternalMessages.WakeupMsg => {
+    case m: ADMMMessages.WakeupMsg => {
        println(s"$selfID : activated local!"); sender ! "yo"
     }
     case s: String => println(s)
-    case d: InternalMessages.VectorUpdateMessage => {
+    case d: ADMMMessages.VectorUpdateMessage => {
       assert(worker != null)
       if(worker != null) {
         worker.receiveMsg(d.sender, new BDV[Double](d.primalVar), new BDV[Double](d.dualVar))
@@ -101,12 +98,12 @@ class WorkerCommunication(val address: String, val hack: WorkerCommunicationHack
 
   def sendPingPongs() {
     for (other <- others.values) {
-      other ! new InternalMessages.PingPong
+      other ! new ADMMMessages.PingPong
     }
   }
 
   def broadcastDeltaUpdate(primalVar: BV[Double], dualVar: BV[Double]) {
-    val msg = new InternalMessages.VectorUpdateMessage(selfID, primalVar.toArray, dualVar.toArray)
+    val msg = new ADMMMessages.VectorUpdateMessage(selfID, primalVar.toArray, dualVar.toArray)
     var counter = 0
     for (other <- others.values) {
       other ! msg
@@ -233,7 +230,7 @@ class AsyncADMMWorker(subProblemId: Int,
       }
       println(s"${comm.selfID}: Sent death message ${System.currentTimeMillis()}")
       // Kill the consumer thread
-      // val poisonMessage = new InternalMessages.VectorUpdateMessage(-2, null, null)
+      // val poisonMessage = new ADMMMessages.VectorUpdateMessage(-2, null, null)
       // comm.inputQueue.add(poisonMessage)
     }
   }
@@ -408,7 +405,7 @@ class AsyncADMM extends BasicEmersonOptimizer with Serializable with Logging {
         val aref = Worker.HACKworkerActorSystem.actorOf(Props(new WorkerCommunication(address, hack)), workerName)
         implicit val timeout = Timeout(15000 seconds)
 
-        val f = aref ? new InternalMessages.WakeupMsg
+        val f = aref ? new ADMMMessages.WakeupMsg
         Await.result(f, timeout.duration).asInstanceOf[String]
 
         val worker = new AsyncADMMWorker(subProblemId = ind,

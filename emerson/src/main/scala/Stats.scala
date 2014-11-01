@@ -74,8 +74,8 @@ case class Stats(
 
   def toMap(): Map[String, Any] = {
     Map(
-      "primalAvg" -> ("[" + primalAvg().toArray.mkString(", ") + "]"),
-      "dualAvg" -> ("[" + dualAvg().toArray.mkString(", ") + "]"),
+      //"primalAvg" -> ("[" + primalAvg().toArray.mkString(", ") + "]"),
+      //"dualAvg" -> ("[" + dualAvg().toArray.mkString(", ") + "]"),
       "avgMsgsSent" -> avgMsgsSent(),
       "avgMsgsRcvd" -> avgMsgsRcvd(),
       "avgLocalIters" -> avgLocalIters(),

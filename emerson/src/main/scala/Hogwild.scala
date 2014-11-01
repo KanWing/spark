@@ -12,20 +12,22 @@ import org.apache.spark.Logging
 import org.apache.spark.deploy.worker.Worker
 import org.apache.spark.rdd.RDD
 
+
+
 import scala.collection.mutable
 import scala.concurrent.Await
 import scala.concurrent.duration._
 import scala.language.postfixOps
 
-//
-//case class AsyncSubProblem(data: Array[(Double, Vector)], comm: WorkerCommunication)
 
-object HWInternalMessages {
+
+object HogwildMessages {
   class WakeupMsg
   class PingPong
   class DeltaUpdate(val sender: Int,
                     val delta: BV[Double])
 }
+
 
 class HWWorkerCommunicationHack {
   var ref: HWWorkerCommunication = null
@@ -46,14 +48,14 @@ class HWWorkerCommunication(val address: String, val hack: HWWorkerCommunication
   @volatile var optimizer: HOGWILDSGDWorker = null
 
   def receive = {
-    case ppm: InternalMessages.PingPong => {
+    case ppm: HogwildMessages.PingPong => {
       logInfo("new message from " + sender)
     }
-    case m: InternalMessages.WakeupMsg => {
+    case m: HogwildMessages.WakeupMsg => {
       logInfo("activated local!"); sender ! "yo"
     }
     case s: String => println(s)
-    case d: HWInternalMessages.DeltaUpdate => {
+    case d: HogwildMessages.DeltaUpdate => {
       if (optimizer != null) {
         //         optimizer.primalVar -= d.delta
         axpy(-optimizer.eta_t, d.delta, optimizer.primalVar)
@@ -88,12 +90,12 @@ class HWWorkerCommunication(val address: String, val hack: HWWorkerCommunication
 
   def sendPingPongs() {
     for (other <- others.values) {
-      other ! new InternalMessages.PingPong
+      other ! new HogwildMessages.PingPong
     }
   }
 
   def broadcastDeltaUpdate(delta: BV[Double]) {
-    val msg = new HWInternalMessages.DeltaUpdate(selfID, delta)
+    val msg = new HogwildMessages.DeltaUpdate(selfID, delta)
     for (other <- others.values) {
       other ! msg
     }
@@ -223,7 +225,7 @@ class HOGWILDSGD extends BasicEmersonOptimizer with Serializable with Logging {
       val aref = Worker.HACKworkerActorSystem.actorOf(Props(new HWWorkerCommunication(address, hack)), workerName)
       implicit val timeout = Timeout(15000 seconds)
 
-      val f = aref ? new InternalMessages.WakeupMsg
+      val f = aref ? new HogwildMessages.WakeupMsg
       Await.result(f, timeout.duration).asInstanceOf[String]
 
         val worker = new HOGWILDSGDWorker(subProblemId = ind,

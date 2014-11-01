@@ -115,6 +115,7 @@ class SparseDataset(ndim: Int, labels: Array[Double], offsets: Array[Int], featu
     val label = labels(ind)
     val begin = offsets(ind)
     val end = offsets(ind + 1)
+    assert(begin <= end)
     val idx = featureIds.view(begin, end)
     val xValues = featureValues.view(begin, end)
     val x: BV[Double] = new BSV[Double](idx.toArray, xValues.toArray, ndim)
@@ -129,6 +130,7 @@ object DataLoaders {
 
   def loadLibSVM(sc: SparkContext, filename: String, params: Params): RDD[RandomAccessDataset] = {
     val partitioned = sc.textFile(params.input)
+      // .sample(false, 0.01).cache
       .map(_.trim)
       .filter(line => !(line.isEmpty || line.startsWith("#")))
       .coalesce(params.numPartitions)
@@ -157,7 +159,7 @@ object DataLoaders {
         val line = iter.next
         val items = line.split(' ')
         val label = items.head.toFloat
-        labels(labelsInd) = label
+        labels(labelsInd) = if (label > 0) 1.0 else 0.0
         offsets(labelsInd) = featuresInd
         labelsInd += 1
 
@@ -183,6 +185,8 @@ object DataLoaders {
     val numDimensions = 
       parsed.map { case (labels, offsets, featureIds, values) => featureIds.max + 1 }
         .reduce((a,b) => math.max(a,b))
+
+    println(s"Libsvm numDim: $numDimensions")
    
     parsed.map { case (labels, offsets, featureIds, values) =>
       RandomAccessDataset(numDimensions, labels, offsets, featureIds, values) }

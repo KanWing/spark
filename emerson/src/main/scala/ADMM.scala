@@ -67,6 +67,7 @@ class ADMM extends BasicEmersonOptimizer with Serializable with Logging {
   override def optimize(): BV[Double] = {
     primalConsensus = initialWeights.copy
 
+    println("Beginning ADMM Optimize")
     // Initialize the solvers
     val primal0 = initialWeights
     solvers = data.mapPartitionsWithIndex { (ind, iter) =>

@@ -31,10 +31,10 @@ TASKS = [("SVM", "L2"), ("LR", "L1"), ("SVM", "L1"), ("LR", "L2")]
 
 
 
-SHORT_ALGORITHMS = ["ADMM", "MLlibGD"] #["AVG", "HOGWILD", "MLlibGD", "PORKCHOP", "ADMM"] #, "HOGWILD"] # "ADMM", "PORKCHOP"]#, "PORKCHOP", "HOGWILD"]#, "PORKCHOP"]#"PORKCHOP", "ADMM"]
+SHORT_ALGORITHMS = ["ADMM"] #, "MLlibGD"] #["AVG", "HOGWILD", "MLlibGD", "PORKCHOP", "ADMM"] #, "HOGWILD"] # "ADMM", "PORKCHOP"]#, "PORKCHOP", "HOGWILD"]#, "PORKCHOP"]#"PORKCHOP", "ADMM"]
 
 
-SHORT_RUNTIMES = [60000] # [2*1000, 10*1000, 30*1000]
+SHORT_RUNTIMES = [360000] # [2*1000, 10*1000, 30*1000]
 SHORT_TASKS = [("SVM", "L2")]
 SHORT_DATASETS = ["splice_site.t"]
 
@@ -54,8 +54,8 @@ GLOBAL_ADMMrho = 1.0e-2 #1e-5
 GLOBAL_ADMMlagrangianRho = GLOBAL_ADMMrho
 
 GLOBAL_ADMM_maxLocalIterations = 10000
-GLOBAL_ADMM_localEpsilon = 1.0e-5
-GLOBAL_ADMM_localTimeout = 100000000
+GLOBAL_ADMM_localEpsilon = 1.0e-3
+GLOBAL_ADMM_localTimeout = 60000
 
 GLOBAL_MiniBatchADMM_maxLocalIterations = 100000000
 GLOBAL_MiniBatchADMM_localEpsilon = 1.0e-3
@@ -174,12 +174,13 @@ def runTest(runtimeMS,
         raise
 
           # "--jars examples/target/scala-2.10/spark-examples-1.1.0-SNAPSHOT-hadoop1.0.4.jar " \
+          # "emerson/target/scala-2.10/spark-emerson_* " \
 
     cmd = "cd /mnt/spark; sbin/stop-all.sh; sleep 5; sbin/start-all.sh; sleep 3;" \
           "./bin/spark-submit " \
           "--driver-memory 52g " \
           "--class edu.berkeley.emerson.Emerson " \
-          "emerson/target/scala-2.10/spark-emerson_* " \
+          "assembly/target/scala-2.10/spark-assembly-1.1.0-SNAPSHOT-hadoop1.0.4.jar " \
           "--algorithm " + str(algorithm) + " " + \
           "--objective " + str(objectiveFn) + " " + \
           "--regType " + str(regType) + " " + \

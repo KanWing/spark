@@ -62,7 +62,7 @@ class EmersonModel(val params: EmersonParams,
   var weights: BV[Double] = null
 
   def fit(params: EmersonParams, initialWeights: BV[Double], data: RDD[RandomAccessDataset]): Unit = {
-
+    println("Beginning fit")
     val initStartTime = System.currentTimeMillis()
     optimizer.initialize(params, lossFunction, regularizationFunction, initialWeights, data)
     initTimeMS = System.currentTimeMillis() - initStartTime

@@ -242,7 +242,7 @@ object Emerson {
     println("Starting to load data...")
 
     var training: RDD[RandomAccessDataset] =
-      if (params.format == "lisbsvm") {
+      if (params.format == "libsvm") {
         DataLoaders.loadLibSVM(sc, params.input, params)
       } else if (params.format == "bismarck") {
         DataLoaders.loadBismark(sc, params.input, params)
@@ -305,6 +305,8 @@ object Emerson {
 
     val nDim = training.map(d => d(0)._2.size).take(1).head
     val initialWeights = BDV.zeros[Double](nDim)
+
+    println(s"nDim: $nDim")
    
     val rando = new java.util.Random(43)
     var i = 0
