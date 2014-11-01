@@ -384,7 +384,7 @@ class AsyncADMM extends BasicEmersonOptimizer with Serializable with Logging {
   override def initialize(params: EmersonParams,
                  lossFunction: LossFunction, regularizationFunction: Regularizer,
                  initialWeights: BV[Double],
-                 rawData: RDD[RandomAccessDataset]): Unit = {
+                 rawData: RDD[(Double, BV[Double])]): Unit = {
     // Preprocess the data
     super.initialize(params, lossFunction, regularizationFunction, initialWeights, rawData)
 
@@ -397,7 +397,7 @@ class AsyncADMM extends BasicEmersonOptimizer with Serializable with Logging {
           throw new RuntimeException("Worker was evicted, dying lol!")
         }
       } else {
-        val data: RandomAccessDataset = iter.next()
+        val data: (Double, BV[Double]) = iter.next()
         val workerName = UUID.randomUUID().toString
         val address = Worker.HACKakkaHost + workerName
         val hack = new WorkerCommunicationHack()

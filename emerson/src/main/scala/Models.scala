@@ -7,7 +7,7 @@ import org.apache.spark.rdd.RDD
 abstract trait EmersonOptimizer extends Serializable {
   def initialize(params: EmersonParams,
                  lossFunction: LossFunction, regularizationFunction: Regularizer,
-                 initialWeights: BV[Double], rawData: RDD[RandomAccessDataset])
+                 initialWeights: BV[Double], rawData: RDD[(Double, BV[Double])])
   def optimize(): BV[Double]
 
   def statsMap(): Map[String, String]
@@ -19,7 +19,7 @@ abstract trait BasicEmersonOptimizer extends EmersonOptimizer {
   var lossFunction: LossFunction = null
   var regularizationFunction: Regularizer = null
   var initialWeights: BV[Double] = null
-  var data: RDD[RandomAccessDataset] = null
+  var data: RDD[(Double, BV[Double])] = null
   var nData: Int = 0
   var nSubProblems: Int = 0
   var nDim: Int = 0
@@ -28,7 +28,7 @@ abstract trait BasicEmersonOptimizer extends EmersonOptimizer {
 
   def initialize(params: EmersonParams,
                  lossFunction: LossFunction, regularizationFunction: Regularizer,
-                 initialWeights: BV[Double], data: RDD[RandomAccessDataset]) {
+                 initialWeights: BV[Double], data: RDD[(Double, BV[Double])]) {
     println(params)
 
     this.data = data
@@ -40,8 +40,7 @@ abstract trait BasicEmersonOptimizer extends EmersonOptimizer {
     nDim = initialWeights.size
     nSubProblems = data.partitions.length
 
-    data.cache()
-    val perNodeData = data.map( a => a.length ).collect
+    val perNodeData = data.mapPartitions( iter => iter.size ).collect
     nData = perNodeData.sum
 
     println(s"Per node data size: ${perNodeData.mkString(",")}")
@@ -61,7 +60,7 @@ class EmersonModel(val params: EmersonParams,
 
   var weights: BV[Double] = null
 
-  def fit(params: EmersonParams, initialWeights: BV[Double], data: RDD[RandomAccessDataset]): Unit = {
+  def fit(params: EmersonParams, initialWeights: BV[Double], data: RDD[(Double, BV[Double])]): Unit = {
     println("Beginning fit")
     val initStartTime = System.currentTimeMillis()
     optimizer.initialize(params, lossFunction, regularizationFunction, initialWeights, data)
@@ -73,10 +72,10 @@ class EmersonModel(val params: EmersonParams,
 
   }
 
-  def score(data: RDD[RandomAccessDataset]): (Double, Double, Double, Double) = {
+  def score(data: RDD[(Double, BV[Double])]): (Double, Double, Double, Double) = {
     assert(weights != null)
     val w = weights // make a local reference to prevent closure capture
-    val (nData, totalError) = data.map { data =>
+    val (nData, totalError) = data.mapPartitions { data =>
       val totalError: Double = data.foldLeft(0.0) {
         case (sum, (y, x)) =>
           assert(y == 0.0 || y == 1.0)

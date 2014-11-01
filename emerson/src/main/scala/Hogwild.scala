@@ -281,9 +281,12 @@ class HOGWILDSGD extends BasicEmersonOptimizer with Serializable with Logging {
     val startTimeNs = System.nanoTime()
 
     // Run all the workers
-    workers.foreach( w => w.mainLoop() )
-    // compute the final consensus value synchronously
-    val nExamples = workers.map(w=>w.data.length).reduce(_+_)
+    workers = workers.zipPartitionsLooped(data) { (workerIter, dataIter) =>
+      val worker = workerIter.next()
+      worker.mainLoop(dataIter)
+      Iterator(worker)
+    }.persist(StorageLevel.MEMORY_AND_DISK)
+
     // Collect the primal and dual averages
     stats =
       workers.map { w => w.getStats() }.reduce( _ + _ )

@@ -6,6 +6,7 @@ import breeze.linalg.{DenseVector => BDV, SparseVector => BSV, Vector => BV, _}
 import org.apache.spark.Logging
 import org.apache.spark.rdd.RDD
 
+import org.apache.spark.storage.StorageLevel
 
 class ADMM extends BasicEmersonOptimizer with Serializable with Logging {
 
@@ -71,14 +72,14 @@ class ADMM extends BasicEmersonOptimizer with Serializable with Logging {
     // Initialize the solvers
     val primal0 = initialWeights
     solvers = data.mapPartitionsWithIndex { (ind, iter) =>
-      val data: RandomAccessDataset = iter.next()
+      val nData = iter.size
       val solver = new ADMMLocalOptimizer(ind, nSubProblems = nSubProblems,
-        nData = nData.toInt, data, lossFunction, regularizationFunction,  params)
+        nData = nData.toInt, lossFunction, regularizationFunction, params)
       // Initialize the primal variable and primal regularizer
       solver.primalVar = primal0.copy
       solver.primalConsensus = primal0.copy
       Iterator(solver)
-    }.cache()
+    }.persist(StorageLevel.MEMORY_AND_DISK)
 
     var primalResidual = Double.MaxValue
     var dualResidual = Double.MaxValue
@@ -100,7 +101,7 @@ class ADMM extends BasicEmersonOptimizer with Serializable with Logging {
       println(s"Master time remaining ${timeRemaining}")
 
       // Run the local solvers
-      stats = solvers.map { solver =>
+      solvers = solvers.zipPartitionsLooped(data) { (solverIter, dataIter) =>
         // Make sure that the local solver did not reset!
         assert(solver.localIters == iteration)
 
@@ -116,12 +117,12 @@ class ADMM extends BasicEmersonOptimizer with Serializable with Logging {
         solver.dualUpdate(solver.params.lagrangianRho)
 
         // Do a primal update
-        solver.primalUpdate(Math.min(timeRemaining, params.localTimeout))
+        solver.primalUpdate(dataIter, Math.min(timeRemaining, params.localTimeout))
+        Iterator(solver)
+      }.persist(StorageLevel.MEMORY_AND_DISK)
 
+      stats = solers.map { s => s.stats() } .reduce(_ + _)
 
-        // Construct stats
-        solver.getStats()
-      }.reduce( _ + _ )
 
 
       assert(stats.nWorkers == nSubProblems)

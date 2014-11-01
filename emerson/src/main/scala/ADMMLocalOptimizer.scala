@@ -13,7 +13,6 @@ import org.apache.spark.rdd.RDD
 class ADMMLocalOptimizer(val subProblemId: Int,
                         val nSubProblems: Int,
                         val nData: Int,
-                        val data: RandomAccessDataset,
                         val lossFun: LossFunction,
                         val regularizer: Regularizer,
                         val params: EmersonParams) extends Serializable with Logging {
@@ -60,7 +59,7 @@ class ADMMLocalOptimizer(val subProblemId: Int,
     dualIters += 1
   }
 
-  def primalUpdate(remainingTimeMS: Long = Long.MaxValue) {
+  def primalUpdate(data: LoopIterator[(Double, BV[Double])], remainingTimeMS: Long = Long.MaxValue) {
     val endByMS = System.currentTimeMillis() + remainingTimeMS
     // params.useLBFGS = true
     // params.maxWorkerIterations = 10

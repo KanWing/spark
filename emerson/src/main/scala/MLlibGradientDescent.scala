@@ -21,11 +21,9 @@ class MLlibGradientDescent extends BasicEmersonOptimizer with Serializable with 
 
 
   override def initialize(params: EmersonParams,
-                 lossFunction: LossFunction, regularizationFunction: Regularizer,
-                 initialWeights: BV[Double], data: RDD[RandomAccessDataset]) {
+    lossFunction: LossFunction, regularizationFunction: Regularizer,
+    initialWeights: BV[Double]) {
     println(params)
-
-    this.data = data
     this.params = params
     this.lossFunction = lossFunction
     this.regularizationFunction = regularizationFunction

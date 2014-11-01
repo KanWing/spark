@@ -18,7 +18,8 @@ trait LossFunction extends Serializable {
   /**
    * Add gradient for point to running sum.
    */
-  def addGradient(w: BV[Double], data: RandomAccessDataset, cumGrad: BV[Double]): Double = {
+  def addGradient(w: BV[Double], data: Iterator[(Double, BV[Double])], 
+    cumGrad: BV[Double]): Double = {
     data.foldLeft(0.0) { case (sum, (y, x)) =>
       sum + addGradient(w, x, y, cumGrad)
     }
@@ -34,7 +35,7 @@ trait LossFunction extends Serializable {
   /**
    * Evaluate the loss on a collection of data points
    */
-  def apply(w: BV[Double], data: RandomAccessDataset): Double = {
+  def apply(w: BV[Double], data: Iterator[(Data, BV[Double])]): Double = {
     data.foldLeft(0.0) { case (sum, (y, x)) => sum + apply(w, x, y) }
   }
 }

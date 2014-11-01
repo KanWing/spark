@@ -236,12 +236,13 @@ object Emerson {
     // conf.set("spark.akka.batchSize", "1") // no negel
     conf.set("spark.akka.heartbeat.interval", "20000") // in seconds?
     conf.set("spark.locality.wait", "100000") // in milliseconds
+    conf.set("spark.storage.memoryFraction", "0.8")
 
     val sc = new SparkContext(conf)
 
     println("Starting to load data...")
 
-    var training: RDD[RandomAccessDataset] =
+    var training: RDD[(Double, BV[Double])] =
       if (params.format == "libsvm") {
         DataLoaders.loadLibSVM(sc, params.input, params)
       } else if (params.format == "bismarck") {
@@ -271,7 +272,7 @@ object Emerson {
 
   
     training.foreach{ x => System.gc() }
-    val numTraining = training.map{x => x.length}.reduce(_ + _)
+    val numTraining = training.count()
     params.numTraining = numTraining
 
     println(s"Loaded data! Number of training examples: $numTraining")
@@ -303,7 +304,7 @@ object Emerson {
     val model = new EmersonModel(params, lossFunction, regularizationFunction, optimizer)
 
 
-    val nDim = training.map(d => d(0)._2.size).take(1).head
+    val nDim = training.map { case (y, x) => x.size }.take(1).head
     val initialWeights = BDV.zeros[Double](nDim)
 
     println(s"nDim: $nDim")

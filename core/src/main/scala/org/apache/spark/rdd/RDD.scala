@@ -597,6 +597,10 @@ abstract class RDD[T: ClassTag](
     new MapPartitionsRDD(this, sc.clean(func), preservesPartitioning)
   }
 
+  def mapPartitionsLooped[U: ClassTag](f: LoopIterator[T] => Iterator[U]): RDD[U] = {
+    new MapPartitionsLoopedRDD(this, sc.clean(f))
+  }
+
   /**
    * Return a new RDD by applying a function to each partition of this RDD, while tracking the index
    * of the original partition.
@@ -722,6 +726,11 @@ abstract class RDD[T: ClassTag](
       (rdd2: RDD[B], preservesPartitioning: Boolean)
       (f: (Iterator[T], Iterator[B]) => Iterator[V]): RDD[V] =
     new ZippedPartitionsRDD2(sc, sc.clean(f), this, rdd2, preservesPartitioning)
+
+  def zipPartitionsLooped[B: ClassTag, V: ClassTag]
+      (rdd2: RDD[B], preservesPartitioning: Boolean)
+      (f: (LoopIterator[T], LoopIterator[B]) => Iterator[V]): RDD[V] =
+    new ZippedPartitionsLoopedRDD2(sc, sc.clean(f), this, rdd2, preservesPartitioning)
 
   def zipPartitions[B: ClassTag, V: ClassTag]
       (rdd2: RDD[B])
