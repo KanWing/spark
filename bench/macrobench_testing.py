@@ -9,8 +9,8 @@ import json
 ## START OF EXPERIMENTAL PARAMETERS
 
 
-RUNTIMES = [2000, 5000, 10000, 20000, 30000] #[1000, 2000, 5000, 10000, 25000, 60000] #1000, 5000, 10000, 20000, 40000, 80000]
-ALGORITHMS = ["DualAvgSGD"] #["HOGWILD", "MLlibGD", "ADMM", "PORKCHOP", "AVG"] #, "MiniBatchADMM", "AVG", "DualDecomp"]#, "GD"]
+RUNTIMES = [5000, 10000, 30000] #[1000, 2000, 5000, 10000, 25000, 60000] #1000, 5000, 10000, 20000, 40000, 80000]
+ALGORITHMS = ["DualAvgSGD", "HOGWILD", "MLlibGD", "ADMM", "PORKCHOP", "AVG"] #, "MiniBatchADMM", "AVG", "DualDecomp"]#, "GD"]
 
 
 PICKLED_OUTPUT = "experiment.pkl"
@@ -20,7 +20,7 @@ DO_TEST_CLOUD_SKEW = False
 DO_TEST_CLOUD_DIM = False
 DO_TEST_DATASETS = True
 
-DATASETS = ["wikipedia", "bismarck", "flights", "dblp"]
+DATASETS = ["splice_site.t"] #["wikipedia", "bismarck", "flights", "dblp"]
 
 TASKS = [("SVM", "L2"), ("LR", "L1"), ("SVM", "L1"), ("LR", "L2")]
 
@@ -79,7 +79,7 @@ DATASET_REG_PARAM = {
 "flights" : 1e-1,
 "dblp" : 1e-1,
 "wikipedia": 1e-1,
-"splice_site": 1e-1,
+"splice_site": 1e-5,
 "splice_site.t": 1e-1
 }
 
@@ -106,16 +106,16 @@ def describe_point_cloud(pointsPerPartition = 500000,
              "--pointCloudDimension " + str(dimension) + " "
 
 def describe_forest():
-    return " --input /user/root/bismarck_data/forest* "
+    return " --input /user/root/bismarck_data/forest* --format bismarck "
 
 def describe_flights(year):
-    return " --input /user/root/flights/"+str(year)+".csv"
+    return " --input /user/root/flights/"+str(year)+".csv --format flights "
 
 def describe_dblp():
-    return " --input /user/root/dblp/binarized-year-to-title.txt"
+    return " --input /user/root/dblp/binarized-year-to-title.txt  --format dblp "
 
 def describe_wikipedia():
-    return " --input /user/root/wiki/en-wiki-8-7-2014-tokenized.txt"
+    return " --input /user/root/wiki/en-wiki-8-7-2014-tokenized.txt --format wikipedia "
 
 def describe_splice_site_t():
     return " --input /user/root/splice_site.t --nfeatures 11725480 --format libsvm "
@@ -184,7 +184,6 @@ def runTest(runtimeMS,
           "--objective " + str(objectiveFn) + " " + \
           "--regType " + str(regType) + " " + \
           "--regParam " + str(regParam) + " " + \
-          "--format " + str(datasetName) + " " + \
           "--numPartitions " + str(numPartitions) + " " + \
           "--runtimeMS " + str(runtimeMS) + " " + \
           "--ADMMmaxLocalIterations " + str(ADMMmaxLocalIterations) + " " + \

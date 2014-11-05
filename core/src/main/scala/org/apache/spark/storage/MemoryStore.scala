@@ -361,6 +361,8 @@ private[spark] class MemoryStore(blockManager: BlockManager, maxMemory: Long)
 
     val droppedBlocks = new ArrayBuffer[(BlockId, BlockStatus)]
 
+    return ResultWithDroppedBlocks(success = false, droppedBlocks)
+
     if (space > maxMemory) {
       logInfo(s"Will not store $blockIdToAdd as it is larger than our memory limit")
       return ResultWithDroppedBlocks(success = false, droppedBlocks)
