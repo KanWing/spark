@@ -125,6 +125,7 @@ class DualAvgSGDWorker(subProblemId: Int,
   @volatile var dualSum: BV[Double] = BV.zeros(nDim)
   @volatile var primalSum: BV[Double] = BV.zeros(nDim)
 
+  var initialPrimal: BV[Double] = null
   val rcvdFrom = new AtomicInteger()
 
   @volatile var eta_t = params.eta_0
@@ -186,7 +187,7 @@ class DualAvgSGDWorker(subProblemId: Int,
       eta_t = params.eta_0 / math.sqrt(t.toDouble + 1.0)
 
       // Apply the project using l2 prox operator
-      primalVar = dualVar * (-eta_t)
+      primalVar = initialPrimal + dualVar * (-eta_t)
 
       primalSum += primalVar
 
@@ -241,6 +242,7 @@ class DualAvgSGD extends BasicEmersonOptimizer with Serializable with Logging {
           lossFun = lossFunction, params = params, regularizer = regularizationFunction,
           comm = hack.ref)
         worker.primalVar = primal0.copy
+        worker.initialPrimal = primal0.copy
         DASetupBlock.workers(ind) = worker
         Iterator(worker)
       }
